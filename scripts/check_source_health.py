@@ -31,7 +31,7 @@ DB = os.path.join(ROOT, "data", "media.db")
 OUT = os.path.join(ROOT, "data", "host_health.json")
 
 # 线上 worker 中转入口（Pages 部署地址）
-PROXY_ORIGIN = os.environ.get("HEALTH_PROXY_ORIGIN", "https://qinjin.pages.dev")
+PROXY_ORIGIN = os.environ.get("HEALTH_PROXY_ORIGIN", "https://kaka-m3u.pages.dev")
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 

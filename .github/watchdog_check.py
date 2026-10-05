@@ -20,7 +20,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-REPO = "a313341127/m3u-library"
+REPO = "kaka1234123123/m3u-library"
 WF = "update.yml"
 TOKEN = os.environ["GITHUB_TOKEN"]
 API = "https://api.github.com"

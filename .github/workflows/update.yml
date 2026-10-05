@@ -5,7 +5,7 @@ name: 每日自动更新
 # -> 每个 run 在「提交数据库变更」步骤失败 -> 触发 GitHub 失败邮件。
 # 串行化后，后启动的 run 在 checkout 时即已包含前一个 run 推送的 media.db，推送为快进合并，不再冲突。
 concurrency:
-  group: qinjin-collection
+  group: m3u-collection
   cancel-in-progress: false
 
 # 每天北京时间 03:30 自动增量采集 -> 生成 M3U/Web -> 生成途播 Jellyfin 数据 -> 部署 Cloudflare Pages -> 提交数据库
@@ -52,7 +52,7 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 350        # 硬上限: 卡死时 GitHub 自动结束 run 并释放 qinjin-collection 并发组, 杜绝死锁永久阻塞全量采集
+    timeout-minutes: 350        # 硬上限: 卡死时 GitHub 自动结束 run 并释放 m3u-collection 并发组, 杜绝死锁永久阻塞全量采集
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -273,7 +273,7 @@ jobs:
             echo "数据库无变化，跳过提交"
           else
             git commit -m "chore: 采集更新 $(date +%F)"
-            # 并发推送保护：3 套工作流共用 qinjin-collection 串行组，但 CI 偶发竞态
+            # 并发推送保护：多套工作流共用 m3u-collection 串行组，但 CI 偶发竞态
             # （同一窗口内其他工作流/手动触发先推了 main），单次 push 会被 non-fast-forward 拒绝。
             # 用「拉取->合并->推送」重试环：每次推送前都重新同步远端，消除竞态窗口。
             # 始终 ff 推送，绝不强推，避免覆盖并发提交（含采集数据）。
@@ -309,20 +309,12 @@ jobs:
         # 因此在部署前就点名超限文件并直接失败，避免只能靠 wrangler 报错倒推。
         run: python scripts/check_output_size.py output
 
-      - name: 部署到 Cloudflare Pages（裸域名 qinjin.pages.dev = 途播入口，由 main 分支提供）
+      - name: 部署到 Cloudflare Pages（裸域名 kaka-m3u.pages.dev，由 main 分支提供）
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          # 裸域名 qinjin.pages.dev 由 main 分支提供（途播实际使用的入口），必须部署到 main。
+          # 裸域名 kaka-m3u.pages.dev 由 main 分支提供，必须部署到 main。
           # production 分支仅作别名/预览，顺带同步以保持一致。
-          npx --yes wrangler@4 pages deploy output --project-name=qinjin --branch=main
-          npx --yes wrangler@4 pages deploy output --project-name=qinjin --branch=production
-
-      - name: 构建并部署分享站（带访问口令，独立项目 qs-agcl2）
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          python share/build.py
-          npx --yes wrangler@4 pages deploy share/dist --project-name=qs-agcl2 --branch=main
+          npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=main
+          npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=production

@@ -23,7 +23,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-REPO = "a313341127/m3u-library"
+REPO = "kaka1234123123/m3u-library"
 TOKEN = os.environ["GITHUB_TOKEN"]
 # 真 PAT: GitHub 规定 GITHUB_TOKEN 无法在同仓库触发新的 workflow run
 # (正是 fast-collect.yml 用 GH_PAT 自触发接力的原因)。监控要能真正拉起采集,

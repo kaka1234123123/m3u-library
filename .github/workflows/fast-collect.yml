@@ -16,7 +16,7 @@ name: 并发采集（云端高频）
 # 部署闸门：仅 03/09/15/21 点且 media.db 有变化才重新生成+部署，节省 Cloudflare Pages 每月 500 次构建额度。
 
 concurrency:
-  group: qinjin-collection
+  group: m3u-collection
   cancel-in-progress: false
 
 on:
@@ -82,7 +82,7 @@ jobs:
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
-          # 部署频率：每天固定 1 次，保持前端(qinjin.pages.dev)最新。
+          # 部署频率：每天固定 1 次，保持前端(kaka-m3u.pages.dev)最新。
           # Cloudflare Pages 免费 500 次构建/月；每天 1 次 × 3 项目 = 3 次/天 ≪ 500/月，不会触发限额邮件。
           # 不再要求「采到新片(NEW>0)」才部署——近期增长多为 episodes 回填/URL 刷新(不产生新片)，
           # 若仍卡 NEW>0 会导致前端长期冻结。故固定在 UTC 03:00(北京 11:00)那一轮强制部署。
@@ -92,17 +92,6 @@ jobs:
           else
             echo "do_deploy=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: 同步增量到 KV（实时新片，热/冷分离）
-        # 每轮采集后把「自上次以来新增」的影片写入 Cloudflare KV，
-        # 使网页/途播在静态基库(每 6h 才部署)之间也能实时看到新片。
-        # 写失败(配额/令牌/网络)不影响主流程；KV 写率约 240-400/天 ≪ 免费档 1000/天。
-        continue-on-error: true
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          KV_DELTA_ID: ${{ secrets.KV_DELTA_ID }}
-        run: python scripts/sync_delta_kv.py
 
       - name: 生成途播 Jellyfin 后端数据（api/movies.json + 地区分片）
         if: steps.collect.outputs.do_deploy == 'true'
@@ -223,13 +212,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # 仅提交断点进度等数据小文件；直连规则文件(shadowrocket_*/direct_rules_*)由 do_deploy 轮
           # 的 gen_direct_rules.py 重新生成、仅用于当轮部署，不在此提交——否则 push 命中 deploy.yml
-          # 的 scripts/** paths 会额外唤醒 deploy.yml 抢占 qinjin-collection 并发组（每次卡最多 90min）。
+          # 的 scripts/** paths 会额外唤醒 deploy.yml 抢占 m3u-collection 并发组（每次卡最多 90min）。
           git add data/fast_collect_progress.json data/live_logos/ data/host_health.json
           if git diff --cached --quiet; then
             echo "无小文件变化，跳过提交"
           else
             git commit -m "chore: 并发采集进度更新 $(date +%F)"
-            # 并发推送保护：3 套工作流共用 qinjin-collection 串行组，但 CI 偶发竞态
+            # 并发推送保护：多套工作流共用 m3u-collection 串行组，但 CI 偶发竞态
             # （同一窗口内其他工作流/手动触发先推了 main），单次 push 会被 non-fast-forward 拒绝。
             # 用「拉取->合并->推送」重试环：每次推送前都重新同步远端，消除竞态窗口。
             # 数据已安全存到 Release 资产（见上一步），此处仅提交断点进度小文件，失败也只告警不阻断。
@@ -261,34 +250,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/db_store.py upload
 
-      - name: 部署到 Cloudflare Pages（裸域名 qinjin.pages.dev = 途播入口）
+      - name: 部署到 Cloudflare Pages（裸域名 kaka-m3u.pages.dev）
         if: steps.collect.outputs.do_deploy == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          npx --yes wrangler@4 pages deploy output --project-name=qinjin --branch=main
-          npx --yes wrangler@4 pages deploy output --project-name=qinjin --branch=production
-
-      - name: 清空 KV 增量（静态库已含全量，避免重复）
-        # 部署轮：静态基库已包含本轮及此前所有新片，清空 KV 增量(置 marker=now)，
-        # 下一轮起增量从零累积，直到下次部署再次清空。写失败不影响主流程。
-        if: steps.collect.outputs.do_deploy == 'true'
-        continue-on-error: true
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          KV_DELTA_ID: ${{ secrets.KV_DELTA_ID }}
-        run: python scripts/sync_delta_kv.py --clear
-
-      - name: 构建并部署分享站（带访问口令，独立项目 qs-agcl2）
-        if: steps.collect.outputs.do_deploy == 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          python share/build.py
-          npx --yes wrangler@4 pages deploy share/dist --project-name=qs-agcl2 --branch=main
+          npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=main
+          npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=production
 
       - name: 接力下一轮（自触发，背靠背约 30 分钟一轮）
         # 仅 repository_dispatch 触发的轮才接力(避免 cron/手动 双链倍乘); 且需本轮采到新片(changed)才续跑,
@@ -301,6 +270,6 @@ jobs:
             -H "Authorization: Bearer $GH_PAT" \
             -H "Accept: application/vnd.github+json" \
             -H "Content-Type: application/json" \
-            https://api.github.com/repos/a313341127/m3u-library/dispatches \
+            https://api.github.com/repos/kaka1234123123/m3u-library/dispatches \
             -d '{"event_type":"fast-collect"}'
           echo "已派发下一轮 repository_dispatch: fast-collect（约 30 分钟后背靠背接力）"

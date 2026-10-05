@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================
-# 一键部署 M3U 源到 Cloudflare Pages（项目名: qinjin）
+# 一键部署 M3U 源到 Cloudflare Pages（项目名: kaka-m3u）
 # 用法:
 #   1) 首次:  cp .env.example .env  并填入 TOKEN / ACCOUNT_ID
 #   2) 以后每次采集完:  ./deploy.sh
 # 说明: 脚本会先重新生成 M3U/TXT，再上传到 Pages production，
-#        自定义域名 qinjin.ccwu.cc 绑定后自动同步生效。
+#        自定义域名绑定后自动同步生效。
 # ============================================================
 set -e
 cd "$(dirname "$0")"
@@ -16,7 +16,7 @@ if [ -f .env ]; then
 fi
 CF_TOKEN="${CLOUDFLARE_API_TOKEN:-}"
 CF_ACCOUNT="${CLOUDFLARE_ACCOUNT_ID:-}"
-PROJECT="qinjin"
+PROJECT="kaka-m3u"
 
 if [ -z "$CF_TOKEN" ] || [ -z "$CF_ACCOUNT" ]; then
   echo "[错误] 缺少 CLOUDFLARE_API_TOKEN 或 CLOUDFLARE_ACCOUNT_ID"
@@ -111,7 +111,7 @@ cat > output/_headers <<'EOF'
 EOF
 
 # ---------- 3) 部署到 Cloudflare Pages ----------
-# 裸域名 qinjin.pages.dev 由 main 分支提供（途播实际入口），必须优先部署到 main。
+# 裸域名 kaka-m3u.pages.dev 由 main 分支提供，必须优先部署到 main。
 # production 分支仅作别名/预览，顺带同步。
 echo "[3/4] 部署到 Cloudflare Pages ($PROJECT) main ..."
 export CLOUDFLARE_API_TOKEN="$CF_TOKEN"
@@ -127,6 +127,6 @@ echo "[4/4] 部署到 Cloudflare Pages ($PROJECT) production ..."
 
 echo ""
 echo "✅ 部署完成！"
-echo "   Web 首页:   https://qinjin.pages.dev/"
-echo "   M3U 源:     https://qinjin.pages.dev/movie.m3u"
-echo "   production 别名: https://production.qinjin.pages.dev/"
+echo "   Web 首页:   https://kaka-m3u.pages.dev/"
+echo "   M3U 源:     https://kaka-m3u.pages.dev/movie.m3u"
+echo "   production 别名: https://production.kaka-m3u.pages.dev/"

@@ -2,7 +2,7 @@ import urllib.request, json, os, sys
 
 PROXY = "http://127.0.0.1:10808"
 TOKEN = os.environ["GH_TOKEN"]
-OWNER, REPO = "a313341127", "m3u-library"
+OWNER, REPO = "kaka1234123123", "m3u-library"
 HEAD = "8e6deb6"
 
 op = urllib.request.build_opener(urllib.request.ProxyHandler({"http": PROXY, "https": PROXY}))

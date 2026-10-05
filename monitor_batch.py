@@ -10,7 +10,7 @@ def api(p, retry=4):
     for _ in range(retry):
         try:
             req = urllib.request.Request(
-                "https://api.github.com/repos/a313341127/m3u-library/actions/" + p,
+                "https://api.github.com/repos/kaka1234123123/m3u-library/actions/" + p,
                 headers={"Authorization": "Bearer " + TOKEN, "Accept": "application/vnd.github+json"})
             return json.loads(OP.open(req, timeout=30).read())
         except Exception:
@@ -21,7 +21,7 @@ def api(p, retry=4):
 def live_all(retry=4):
     for _ in range(retry):
         try:
-            req = urllib.request.Request("https://qinjin.pages.dev/api/all.json",
+            req = urllib.request.Request("https://kaka-m3u.pages.dev/api/all.json",
                                         headers={"User-Agent": "monitor"})
             return json.loads(OP.open(req, timeout=30).read())
         except Exception:

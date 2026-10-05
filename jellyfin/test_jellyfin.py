@@ -1,6 +1,6 @@
 import urllib.request, json
 
-BASE = "https://m3u-jellyfin.a313341127.workers.dev"
+BASE = "https://m3u-jellyfin.kaka1234123123.workers.dev"
 PROXY = "http://127.0.0.1:10808"
 op = urllib.request.build_opener(urllib.request.ProxyHandler({"http": PROXY, "https": PROXY}))
 

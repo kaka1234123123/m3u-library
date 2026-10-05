@@ -7,7 +7,7 @@
   不再因为「清单没写新子域」导致该片被 VPN 代理而黑屏。
 - 对跨多个注册域的品牌(如 xgplay17/20.com、ffzy-*.com、dytt-*.com)，额外发
   DOMAIN-KEYWORD 规则进一步压缩。
-- 后端 qinjin.pages.dev / qs-agcl2.pages.dev / workers.dev 强制 PROXY，置于最前。
+- 后端 kaka-m3u.pages.dev / workers.dev 强制 PROXY，置于最前。
 
 输出:
   scripts/shadowrocket_direct_rules.list  (Shadowrocket / 订阅格式)
@@ -29,8 +29,7 @@ DEFAULT_DB = os.path.join(REPO, "data", "media.db")
 
 # 后端域名：必须走代理(海外 Cloudflare)，放最前强制 PROXY
 BACKEND_PROXY = [
-    "qinjin.pages.dev",
-    "qs-agcl2.pages.dev",
+    "kaka-m3u.pages.dev",
     "workers.dev",
 ]
 
@@ -164,7 +163,7 @@ def render_shadowrocket(suffix, keyword):
     lines.append("# ===========================================================")
     lines.append("# 秦哥影视 / 途播 - 国内视频 CDN 直连规则 (Shadowrocket 订阅)")
     lines.append("# 自动生成自 data/media.db（脚本 scripts/gen_direct_rules.py）")
-    lines.append("# 用途：手机开 VPN 访问 qinjin.pages.dev 后端的同时，")
+    lines.append("# 用途：手机开 VPN 访问 kaka-m3u.pages.dev 后端的同时，")
     lines.append("#        让国内视频 CDN 走本地直连（不被 VPN 代理拦截）。")
     lines.append("# 用法：Shadowrocket -> 配置 -> + -> 导入/订阅此文件")
     lines.append("# 关键：出站模式必须选「配置」而非「全局代理」，")
@@ -207,7 +206,7 @@ def render_module(suffix, keyword):
     lines = []
     lines.append("#!name=秦哥影视·国内源直连分流")
     lines.append("#!desc=从媒体库自动生成：国内视频CDN直连，海外后端强制代理。经订阅可自动更新。")
-    lines.append("#!author=qinjin")
+    lines.append("#!author=kaka-m3u")
     lines.append("")
     lines.append("[Rule]")
     for d in BACKEND_PROXY:

@@ -39,7 +39,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from generator.m3u import is_tv_gala  # noqa: E402
 
-BASE = "https://qinjin.pages.dev/"
+BASE = "https://kaka-m3u.pages.dev/"
 H = {"User-Agent": "Mozilla/5.0"}
 CTX = __import__("ssl").create_default_context()
 CTX.check_hostname = False

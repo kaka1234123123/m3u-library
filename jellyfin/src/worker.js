@@ -8,7 +8,7 @@
 // KV_DELTA），本 Worker 运行时读取并与静态基库合并——基库优先（含全量线路），
 // 基库没有的（本轮新增、尚未进静态库）走 KV 增量，实现新片实时可见、无需等 Pages 构建。
 
-const DATA_URL = "https://production.qinjin.pages.dev/api/movies.json?v=20260825d";
+const DATA_URL = "https://production.kaka-m3u.pages.dev/api/movies.json?v=20260825d";
 const REGION_ORDER = [
   "中国大陆", "香港", "台湾", "美国", "日本", "韩国",
   "英国", "印度", "泰国", "欧美", "其他",

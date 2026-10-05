@@ -2,7 +2,7 @@
 
 监控已触发的「最大 batch1」(run 33054942763)，随后顺序触发：
   最大 b2 (3001-6116) -> 爱奇艺 b1/b2 -> 魔都 b1/b2
-每个批次经 GitHub Actions 跑：采集 -> 生成分片 -> 部署 qinjin+share -> 提交 media.db。
+每个批次经 GitHub Actions 跑：采集 -> 生成分片 -> 部署 Cloudflare Pages -> 提交 media.db。
 本脚本只负责「触发 + 等待 + 核验」，不修改任何代码。
 核验方式：每批成功后用 `git show origin/main:data/media.db` 取 CI 提交的库，
 统计各分类唯一片数（按 name+year 去重），写入 chain.log。
@@ -13,7 +13,7 @@ PAT = os.environ.get("GITHUB_PAT", "")
 if not PAT:
     raise SystemExit("请先设置环境变量 GITHUB_PAT（GitHub PAT，actions:write）")
 PROXY = "http://127.0.0.1:10808"
-REPO = "a313341127/m3u-library"
+REPO = "kaka1234123123/m3u-library"
 WF = "update.yml"
 HDR = {
     "Authorization": "Bearer " + PAT,

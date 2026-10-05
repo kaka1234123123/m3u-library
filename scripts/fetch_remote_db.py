@@ -13,7 +13,7 @@ import urllib.request
 import threading
 
 TOKEN = os.environ.get("GITHUB_TOKEN", "")
-REPO = "a313341127/m3u-library"
+REPO = "kaka1234123123/m3u-library"
 TAG = "db-store"
 ASSET = "media.db.zst"          # 2026-09-08 起 zstd; 旧资产名 media.db.gz 自动回退
 LEGACY_ASSET = "media.db.gz"

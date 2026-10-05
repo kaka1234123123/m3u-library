@@ -38,13 +38,13 @@ on:
 permissions:
   contents: read
 
-# 串行化：与「每日自动更新」「分集回填」共用并发组 qinjin-collection，
+# 串行化：与「每日自动更新」共用并发组 m3u-collection，
 # 避免本工作流（push 触发）与带库部署互相踩踏。
 # 关键修复：此前本工作流既不在并发组、又缺少 db 下载步骤，
 # push 代码时直接用空库（media.db 被 gitignore，全新检出为空）覆盖线上，
 # 导致途播 Jellyfin 后端 / 网页数据被清空。现已从 Release 资产恢复 media.db 再生成。
 concurrency:
-  group: qinjin-collection
+  group: m3u-collection
   cancel-in-progress: false
 
 jobs:
@@ -88,7 +88,7 @@ jobs:
           python scripts/generate_covers.py
 
       - name: 生成直连分流规则（来自 media.db，自动覆盖新 CDN 子域）
-        # 手机开 VPN 访问 qinjin.pages.dev 后端时，让国内视频 CDN 走直连。
+        # 手机开 VPN 访问 kaka-m3u.pages.dev 后端时，让国内视频 CDN 走直连。
         # 规则从 media.db 现抽现生成，源站换子域也能自动命中，不再手写维护。
         run: |
           python scripts/gen_direct_rules.py
@@ -191,26 +191,10 @@ jobs:
         # 因此在部署前就点名超限文件并直接失败，避免只能靠 wrangler 报错倒推。
         run: python scripts/check_output_size.py output
 
-      - name: 部署到 Cloudflare Pages（裸域名 qinjin.pages.dev = 途播入口，由 main 分支提供）
+      - name: 部署到 Cloudflare Pages（裸域名 kaka-m3u.pages.dev，由 main 分支提供）
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          npx --yes wrangler@4 pages deploy output --project-name=qinjin --branch=main
-          npx --yes wrangler@4 pages deploy output --project-name=qinjin --branch=production
-
-      - name: 部署途播 Jellyfin Worker（含 KV_DELTA 实时增量合并）
-        # m3u-jellyfin.a313341127.workers.dev 是途播实际消费的 Jellyfin 后端；
-        # 增量逻辑在 jellyfin/src/worker.js，绑定 KV_DELTA 命名空间实现 0 部署实时同步。
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx --yes wrangler@4 deploy --config jellyfin/wrangler.toml
-
-      - name: 构建并部署分享站（带访问口令，独立项目 qs-agcl2）
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          python share/build.py
-          npx --yes wrangler@4 pages deploy share/dist --project-name=qs-agcl2 --branch=main
+          npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=main
+          npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=production

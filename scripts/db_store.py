@@ -38,7 +38,7 @@ import urllib.error
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(REPO, "data", "media.db")
-OWNER = "a313341127"
+OWNER = "kaka1234123123"
 REPO_NAME = "m3u-library"
 TAG = "db-store"
 ASSET_NAME = "media.db.zst"       # 压缩资产名（2026-09-08 起改用 zstd, 比 gzip 再省 20-40% 体积）
