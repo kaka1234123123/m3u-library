@@ -35,7 +35,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>秦哥影视资源</title>
+  <title>卡卡影视</title>
   <meta name="theme-color" content="#101318">
   <!-- 国内 CDN 常因 Referer 反盗链拒绝页面内播放，全局无 Referer 可让 hls.js / video 直接播放 -->
   <meta name="referrer" content="no-referrer">
@@ -820,7 +820,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
   <header>
     <div class="header-inner">
-      <h1 class="title"><span class="title-dot"></span>秦哥影视资源</h1>
+      <h1 class="title"><span class="title-dot"></span>卡卡影视</h1>
       <div class="header-row">
         <nav class="tabs" id="tabs"></nav>
         <div class="search-wrap">
