@@ -109,10 +109,15 @@ def ensure_unique_index(conn: sqlite3.Connection, verbose: bool = True) -> bool:
 
 
 def ensure_schema(conn: sqlite3.Connection, verbose: bool = True) -> None:
-    """补列 + 建唯一索引。**任何直接用裸 sqlite3 写 resources 表的入口都必须先调用它**
+    """建表 + 补列 + 建唯一索引。**任何直接用裸 sqlite3 写 resources 表的入口都必须先调用它**
     （如 scripts/fast_collect.py、scripts/backfill_run.py）—— 否则新加的
     douban_id 等列在老库上不存在，UPSERT 会直接报 no such column。
+
+    空库自愈：这些入口不会走 Database()（只有 Database() 才会 executescript(SCHEMA) 建表），
+    所以首次运行 / Release 资产恢复失败时库里连 resources 表都没有，PRAGMA table_info
+    会拿到空集合、UPSERT 直接报 no such table。SCHEMA 内全部是 IF NOT EXISTS，可安全重复执行。
     """
+    conn.executescript(SCHEMA)
     cols = {r[1] for r in conn.execute("PRAGMA table_info(resources)")}
     added = []
     for name, ddl in (

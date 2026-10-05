@@ -49,6 +49,8 @@ GUARD_BYTES = 1800 * 1024 * 1024 # 体积闸门: 压缩后超过该值(1.8GB)拒
 
 # 安全阈值：库小于此值不上传，避免「下载失败→空库→误覆盖好库」导致数据清空。
 # 正常库 90MB+，空库仅几十 KB，5MB 阈值足够区分。
+# ⚠️ 该阈值仅在 Release 里已存在一个 ≥5MB 的旧库时才生效；空库冷启动（fork 首跑）
+#    阶段库必然 <5MB，此时若也拦下，断点进度已提交而库没回传 → 该轮数据永久丢失。
 MIN_UPLOAD_BYTES = 5 * 1024 * 1024
 
 API = "https://api.github.com"
@@ -189,13 +191,23 @@ def cmd_upload(token):
         print("DB_STORE: 本地无 media.db，跳过上传")
         return 0
     size = os.path.getsize(DB_PATH)
-    if size < MIN_UPLOAD_BYTES:
-        print(f"DB_STORE: media.db 仅 {size/1024/1024:.2f} MB（< 阈值），疑似空库，跳过上传以免误清空好库")
-        return 0
 
     rel = ensure_release(token)
     upload_base = rel["upload_url"].split("{")[0]
     assets = rel.get("assets", [])
+
+    # 安全阈值只有在「已存在一个足够大的旧库」时才生效。
+    # 否则空库冷启动（如 fork 后首次运行）阶段库恒 <5MB，每轮上传都会被拒，
+    # 而断点进度已写回仓库 → 该轮采到的数据永久丢失。
+    prev_asset = next(
+        (a for a in assets if a.get("name") in (ASSET_NAME, RAW_ASSET_NAME)), None)
+    prev_bytes = (prev_asset or {}).get("size", 0)
+    if size < MIN_UPLOAD_BYTES and prev_bytes >= MIN_UPLOAD_BYTES:
+        print(f"DB_STORE: media.db 仅 {size/1024/1024:.2f} MB（< 阈值），"
+              f"且已有 {prev_bytes/1024/1024:.1f} MB 的旧库，疑似空库，跳过上传以免误清空好库")
+        return 0
+    if size < MIN_UPLOAD_BYTES:
+        print(f"DB_STORE: media.db {size/1024/1024:.2f} MB（冷启动阶段，无大库可覆盖），正常上传")
 
     # 压缩后再上传：SQLite 文本字段（分集 JSON）压缩比高，zstd 比 gzip 再省 20-40%，
     # 既延缓 2GB Release 资产上限，又缩短每轮传输耗时。
