@@ -1,0 +1,278 @@
+name: 并发采集（云端高频）
+
+# 目标：把 m3u-library 的采集也做成「云端自动、高频轮转、跑完续跑」，对标 G 盘 ZCODE 途播
+# 的 collect.yml（GitHub Actions 定时 + workflow_dispatch + repository_dispatch，单轮 TIME_LIMIT
+# 到点暂停、进度写回仓库、下一次自动接着跑）。
+#
+# 提速来源：scripts/fast_collect.py 多源并发(5) × 每源多 type 并发(3) × 详情批量拉取，
+# 比原 main.py collect 的串行快一个量级。每轮只跑 TIME_LIMIT 秒，到点保存断点，
+# 下一次定时/手动唤起从断点继续，全程零人工介入。
+#
+# 串行化：与「每日自动更新」「分集回填」共用 concurrency 组，避免并发推送 media.db 冲突。
+# 仓库已设为 public → GitHub Actions 对公开库无限分钟，可高频轮转。
+# 频率(提速核心)：每轮结束自触发（workflow_dispatch，PAT）唤起下一轮 → 背靠背约 30 分钟一轮，
+#   免疫 GitHub cron 抖动(实测 cron 每小时触发也会拖到 2-5 小时)；仅当本轮采到新片(changed)才接力，
+#   采完即自动停链。cron '*/30' 仅作安全网(不接力)，链断裂时兜底续采。
+# 部署闸门：仅 03/09/15/21 点且 media.db 有变化才重新生成+部署，节省 Cloudflare Pages 每月 500 次构建额度。
+
+concurrency:
+  group: m3u-collection
+  cancel-in-progress: false
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # 安全网: 每 30 分钟兜底跑一轮(不接力, 防链断裂后无采集); 主力靠 repository_dispatch 自触发接力(见文末)
+  repository_dispatch:
+    types: [fast-collect]   # 可由 API(PAT 仅需 repo 权限) 立即触发，不占本机
+  workflow_dispatch:
+    inputs:
+      TIME_LIMIT:
+        description: '单轮采集时间上限（秒），到点暂停续跑；默认 1500(25分钟)'
+        required: false
+        default: '1500'
+      SKIP_COVERS:
+        description: '跳过封面生成（加速；默认生成）'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45        # 硬上限 45min: 即使卡死也只占组即释放; 接力链串行(同并发组)不会重叠
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 恢复 media.db（从 Release 资产，绕过 git 100MB 限制）
+        # media.db 已不再进 git（会涨过 100MB 触发 GH001 大文件拒绝→所有 push 失败→限额邮件）。
+        # 改为存 GitHub Release 资产（上限 2GB、无带宽配额）；CI 开头拉回上次采集的库。
+        # 若下载失败（网络/API 异常）本步以非 0 退出，让工作流失败以便下次重试，避免误清空。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/db_store.py download
+
+      - name: 并发采集（多源并发 + TIME_LIMIT 续跑）
+        id: collect
+        # fast_collect.py 直接写 media.db；进度存 data/fast_collect_progress.json，
+        # 本工作流末尾提交回仓库，下一轮自动续跑。
+        env:
+          TIME_LIMIT: ${{ github.event.inputs.TIME_LIMIT || '1500' }}
+        run: |
+          python -m pip install -q requests
+          python scripts/fast_collect.py \
+            --time-limit ${{ github.event.inputs.TIME_LIMIT || '1500' }} \
+            --workers 5 --type-workers 3
+          # 标记是否有新数据：读 fast_collect.py 写出的统计文件（不再用 git diff media.db，
+          # 因为 media.db 已移出 git）。new>0 表示本轮采到新片，后续才重新生成+部署。
+          NEW=$(python -c "import json;print(json.load(open('data/_collect_stats.json')).get('new',0))" 2>/dev/null || echo 0)
+          if [ "$NEW" -gt 0 ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          # 部署频率：每天固定 1 次，保持前端(kaka-m3u.pages.dev)最新。
+          # Cloudflare Pages 免费 500 次构建/月；每天 1 次 × 3 项目 = 3 次/天 ≪ 500/月，不会触发限额邮件。
+          # 不再要求「采到新片(NEW>0)」才部署——近期增长多为 episodes 回填/URL 刷新(不产生新片)，
+          # 若仍卡 NEW>0 会导致前端长期冻结。故固定在 UTC 03:00(北京 11:00)那一轮强制部署。
+          HOUR=$(date +%H); MIN=$(date +%M)
+          if [ "$HOUR" = "3" ] && [ "$MIN" -lt 30 ]; then
+            echo "do_deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "do_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 生成途播 Jellyfin 后端数据（api/movies.json + 地区分片）
+        if: steps.collect.outputs.do_deploy == 'true'
+        env:
+          WEB_STRICT_HEALTH: 1
+        run: |
+          python generate_movies_json.py
+
+      - name: 生成电影墙分类封面
+        if: steps.collect.outputs.do_deploy == 'true' && inputs.SKIP_COVERS != 'true'
+        run: |
+          python -m pip install -q pillow
+          python scripts/generate_covers.py
+
+      - name: 生成直连分流规则（来自 media.db，订阅自动更新）
+        if: steps.collect.outputs.do_deploy == 'true'
+        run: |
+          python scripts/gen_direct_rules.py
+
+      - name: 复制直连规则到站点（供 Shadowrocket/Clash 订阅，经 VPN 可达）
+        if: steps.collect.outputs.do_deploy == 'true'
+        run: |
+          cp scripts/shadowrocket_direct_rules.list output/
+          cp scripts/shadowrocket_direct_module.conf output/
+          cp scripts/direct_rules_clash.yaml output/
+
+      - name: 递增 DATA_VERSION（避免客户端/途播缓存旧数据）
+        if: steps.collect.outputs.do_deploy == 'true'
+        run: |
+          VER="$(date +%Y%m%d%H)"
+          sed -i "s/const DATA_VERSION = \".*\";/const DATA_VERSION = \"$VER\";/" output/_worker.js
+          echo "DATA_VERSION -> $VER"
+          grep "DATA_VERSION =" output/_worker.js
+
+      - name: 生成 _headers（M3U Content-Type 修正 + 禁止缓存）
+        run: |
+          cat > output/_headers <<'EOF'
+          /movie.m3u
+            Content-Type: application/vnd.apple.mpegurl
+            Cache-Control: max-age=0, must-revalidate
+          /tv.m3u
+            Content-Type: application/vnd.apple.mpegurl
+            Cache-Control: max-age=0, must-revalidate
+          /anime.m3u
+            Content-Type: application/vnd.apple.mpegurl
+            Cache-Control: max-age=0, must-revalidate
+          /variety.m3u
+            Content-Type: application/vnd.apple.mpegurl
+            Cache-Control: max-age=0, must-revalidate
+          /movie.txt
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          /tv.txt
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          /anime.txt
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          /variety.txt
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          /movie.best.m3u
+            Content-Type: application/vnd.apple.mpegurl
+            Cache-Control: max-age=0, must-revalidate
+          /tv.best.m3u
+            Content-Type: application/vnd.apple.mpegurl
+            Cache-Control: max-age=0, must-revalidate
+          /anime.best.m3u
+            Content-Type: application/vnd.apple.mpegurl
+            Cache-Control: max-age=0, must-revalidate
+          /variety.best.m3u
+            Content-Type: application/vnd.apple.mpegurl
+            Cache-Control: max-age=0, must-revalidate
+          /movie.best.txt
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          /tv.best.txt
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          /anime.best.txt
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          /variety.best.txt
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          /live.m3u
+            Content-Type: application/vnd.apple.mpegurl
+            Cache-Control: max-age=0, must-revalidate
+          /live.txt
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          /shadowrocket_direct_module.conf
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          /shadowrocket_direct_rules.list
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          /direct_rules_clash.yaml
+            Content-Type: text/plain; charset=utf-8
+            Cache-Control: max-age=0, must-revalidate
+          # 数据/简介/直播分片文件名含内容哈希（generator/web.py _hash_write）→ 可放心 immutable
+          # ⚠️ 三处 _headers 块（deploy/update/fast-collect）必须同步，后部署者会整体覆盖
+          /web/*
+            Cache-Control: public, max-age=31536000, immutable
+          /covers/*
+            Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+          /index.html
+            Cache-Control: max-age=0, must-revalidate
+          EOF
+
+      - name: 提交进度与规则（media.db 不进 git，改走 Release 资产）
+        if: always()
+        # 顺序：先提交小文件，最后才部署；即便部署失败也已落库。
+        # 仅提交 data/fast_collect_progress.json（断点续跑状态）+ 直播台标 + 直连规则等小文件；
+        # media.db 体积会涨过 100MB，改由下方「上传 media.db」步骤存到 Release 资产。
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 仅提交断点进度等数据小文件；直连规则文件(shadowrocket_*/direct_rules_*)由 do_deploy 轮
+          # 的 gen_direct_rules.py 重新生成、仅用于当轮部署，不在此提交——否则 push 命中 deploy.yml
+          # 的 scripts/** paths 会额外唤醒 deploy.yml 抢占 m3u-collection 并发组（每次卡最多 90min）。
+          git add data/fast_collect_progress.json data/live_logos/ data/host_health.json
+          if git diff --cached --quiet; then
+            echo "无小文件变化，跳过提交"
+          else
+            git commit -m "chore: 并发采集进度更新 $(date +%F)"
+            # 并发推送保护：多套工作流共用 m3u-collection 串行组，但 CI 偶发竞态
+            # （同一窗口内其他工作流/手动触发先推了 main），单次 push 会被 non-fast-forward 拒绝。
+            # 用「拉取->合并->推送」重试环：每次推送前都重新同步远端，消除竞态窗口。
+            # 数据已安全存到 Release 资产（见上一步），此处仅提交断点进度小文件，失败也只告警不阻断。
+            PUSHED=0
+            for i in 1 2 3 4 5; do
+              git fetch origin main || true
+              if git merge origin/main --no-edit; then
+                if git push origin HEAD:main; then
+                  echo "进度已推送（第 $i 次尝试）"
+                  PUSHED=1
+                  break
+                fi
+              else
+                git merge --abort 2>/dev/null || true
+              fi
+              echo "第 $i 次推送遇竞态，2s 后重试..."
+              sleep 2
+            done
+            if [ "$PUSHED" -ne 1 ]; then
+              echo "::warning::进度文件推送失败（竞态次数过多），但 media.db 已存 Release 资产，不影响采集"
+            fi
+          fi
+
+      - name: 上传 media.db 到 Release 资产（绕过 git 100MB 限制）
+        if: steps.collect.outputs.changed == 'true'   # 仅本轮有新数据才回传, 省带宽; 采完(changed=false)链自动停
+        # 把更新后的 media.db 存回 Release 资产（db-store / media.db），供下一轮 CI 拉回续跑。
+        # 库 <5MB 时自动跳过，避免「下载失败→空库」误清空好库。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/db_store.py upload
+
+      - name: 部署到 Cloudflare Pages（裸域名 kaka-m3u.pages.dev）
+        if: steps.collect.outputs.do_deploy == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=main
+          npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=production
+
+      - name: 接力下一轮（自触发，背靠背约 30 分钟一轮）
+        # 条件：非 cron 轮 且 本轮采到新片(changed) → 才续跑；采完(changed=false)链自动停。
+        # cron 轮不接力（避免与 */30 安全网双链倍乘）。
+        # 用 GH_PAT(仓库 secret, 真 PAT) 调 workflow_dispatch 触发下一轮 —— GITHUB_TOKEN 无法自触发(平台防递归)。
+        # 注意：本仓库实测 repository_dispatch 事件收不到 run（API 返回 204 但静默不派发），
+        #       故改用 workflow_dispatch（实测可靠生效）。
+        if: github.event_name != 'schedule' && steps.collect.outputs.changed == 'true'
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GH_PAT" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            https://api.github.com/repos/kaka1234123123/m3u-library/actions/workflows/fast-collect.yml/dispatches \
+            -d '{"ref":"main","inputs":{"TIME_LIMIT":"1500"}}'
+          echo "已派发下一轮 fast-collect（workflow_dispatch，背靠背接力）"
