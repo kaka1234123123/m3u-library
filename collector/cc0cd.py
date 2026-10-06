@@ -339,6 +339,10 @@ class CC0CDCollector(BaseCollector):
             except (TypeError, ValueError):
                 tid = None
             mapped.append((tid, tname, cat, mt))
+        # 4K/2160p 专区优先：这类分类在源站 class 列表里往往排最后，
+        # 每轮 TIME_LIMIT 到点时就永远轮不到（实测 4K 内容长期采不进来）。
+        # 稳定排序，其余分类保持原顺序。
+        mapped.sort(key=lambda x: 0 if ('4k' in (x[1] or '').lower() or '2160' in (x[1] or '').lower()) else 1)
         return mapped
 
     # --------------------------------------------------------------
