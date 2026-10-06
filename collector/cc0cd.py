@@ -519,7 +519,8 @@ class CC0CDCollector(BaseCollector):
         # 分类名补标：率率/星球等源站有「4K电影」「4K动漫」这类专区分类，
         # 备注里往往不写清晰度，导致 4K 片子采到了却标不上。
         # 备注优先（更精确），备注/封面都没有时再看分类名。
-        if not quality:/n            quality = extract_quality(raw_type_name)
+        if not quality:
+            quality = extract_quality(raw_type_name)
 
         year = v.get("vod_year")
         try:
