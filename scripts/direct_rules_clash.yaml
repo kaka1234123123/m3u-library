@@ -46,6 +46,7 @@ rules:
   - DOMAIN-SUFFIX,baofeng11.com,DIRECT
   - DOMAIN-SUFFIX,baofeng9.com,DIRECT
   - DOMAIN-SUFFIX,bdzybf7.com,DIRECT
+  - DOMAIN-SUFFIX,bestv.cn,DIRECT
   - DOMAIN-SUFFIX,bfeng10.com,DIRECT
   - DOMAIN-SUFFIX,bfeng11.com,DIRECT
   - DOMAIN-SUFFIX,bfikuncdn.com,DIRECT
@@ -87,6 +88,7 @@ rules:
   - DOMAIN-SUFFIX,cztv.com,DIRECT
   - DOMAIN-SUFFIX,cztvcloud.com,DIRECT
   - DOMAIN-SUFFIX,daningtv.com,DIRECT
+  - DOMAIN-SUFFIX,dbzy10.com,DIRECT
   - DOMAIN-SUFFIX,ddbbffcdn.com,DIRECT
   - DOMAIN-SUFFIX,dxhmt.cn,DIRECT
   - DOMAIN-SUFFIX,dytt-broadcast.com,DIRECT
@@ -150,6 +152,7 @@ rules:
   - DOMAIN-SUFFIX,ganzitv.com,DIRECT
   - DOMAIN-SUFFIX,gatv.com.cn,DIRECT
   - DOMAIN-SUFFIX,gggread.com,DIRECT
+  - DOMAIN-SUFFIX,githubusercontent.com,DIRECT
   - DOMAIN-SUFFIX,gstv.com.cn,DIRECT
   - DOMAIN-SUFFIX,gsuus.com,DIRECT
   - DOMAIN-SUFFIX,guzhenm.com,DIRECT
@@ -359,6 +362,7 @@ rules:
   - DOMAIN-SUFFIX,v13zuidazym3u8.com,DIRECT
   - DOMAIN-SUFFIX,vip.lz-cjavascript,DIRECT
   - DOMAIN-SUFFIX,vipzyk-video.com,DIRECT
+  - DOMAIN-SUFFIX,vmtqw.com,DIRECT
   - DOMAIN-SUFFIX,voc.com.cn,DIRECT
   - DOMAIN-SUFFIX,vpstv.net,DIRECT
   - DOMAIN-SUFFIX,vvvip-plays33.cc,DIRECT
