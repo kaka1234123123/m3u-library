@@ -18,7 +18,17 @@ on:
   # 若「每天部署」仍挂在 fast-collect 的 03:00 窗口上会悄悄不触发（实测近 30 次采集 run 仅 1 次落在 :00/:30）。
   # 此处独立 cron 保证前端每天至少刷新一次，约 1 次/天 ≪ Cloudflare Pages 500 次/月额度。
   schedule:
+    # 主 cron：北京时间 11:00（UTC 03:00）自动把当前 media.db 重新生成并部署到前端，
+    # 与采集节奏解耦。原因：fast-collect 在稳定态(changed=false)会静默、其 cron 安全网常延迟，
+    # 若「每天部署」仍挂在 fast-collect 的 03:00 窗口上会悄悄不触发（实测近 30 次采集 run 仅 1 次落在 :00/:30）。
+    # 约 1 次/天 ≪ Cloudflare Pages 500 次/月额度。
     - cron: '0 3 * * *'
+    # 兜底 cron：每 6 小时检查一次线上数据新鲜度，停了更久才补部署。
+    # 存在的意义：scheduled run 会因仓库繁忙 / 并发组排队而延迟甚至整天不触发（实测 10-21 的
+    # 部署因 Token 失效失败后，第二天整天没有任何 workflow 补上，线上数据停在 10-20）。
+    # 与主 cron 错开（:17 分，避开整点高峰），且只在线上数据超过 6 小时未更新时才真正部署
+    # （由「检查线上数据新鲜度」步骤判定），不额外消耗 Pages 构建额度。
+    - cron: '17 */6 * * *'
   # 推送代码（非数据）变更时自动部署，使网页/worker 改动即时上线；
   # 仅 data/media.db 的数据推送（来自采集定时任务）不匹配 paths，不触发，避免重复部署。
   push:
@@ -44,7 +54,12 @@ permissions:
 # push 代码时直接用空库（media.db 被 gitignore，全新检出为空）覆盖线上，
 # 导致途播 Jellyfin 后端 / 网页数据被清空。现已从 Release 资产恢复 media.db 再生成。
 concurrency:
-  group: m3u-collection
+  # 独立并发组（2026-10-22 改）：此前 fast-collect / update / deploy 三个工作流共用
+  # 「m3u-collection」一个组，而 fast-collect 是自触发接力链（每轮结束派发下一轮，
+  # 背靠背约 30 分钟一轮），几乎永远占着这个组 → update 与 deploy 长期排队，
+  # 实测 10-21 的「每日自动更新」queued 超过 17 小时未执行，线上数据停在 10-20。
+  # 拆分后：采集组只挡采集，部署组只挡部署，互不饿死。
+  group: m3u-deploy
   cancel-in-progress: false
 
 jobs:
@@ -60,20 +75,54 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: 检查线上数据新鲜度（只在真的停更时才部署）
+        id: fresh
+        # 「线上停更」的自愈闸门：
+        #   - 线上数据未超过 6 小时 → 跳过后面所有步骤（省 Actions 分钟 + Pages 构建额度）
+        #   - 线上数据超过 6 小时 → 继续部署，把最新 media.db 发布上去
+        # 触发源：每 6 小时一次的兜底 cron（见上面的 schedule）。
+        # 手动触发（workflow_dispatch）与 push 触发时永远部署，不受此闸门限制 ——
+        # 那是人明确要求的动作。
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
+        run: |
+          if [ "$FORCE" = "true" ]; then
+            echo "force=true" >> "$GITHUB_OUTPUT"
+            echo "手动/push 触发 → 强制部署，跳过新鲜度闸门"
+            exit 0
+          fi
+          # 退出码：0=新鲜(不部署) 1=过期(要部署) 2=检查失败(保守起见当作要部署)
+          set +e
+          python scripts/check_freshness.py --max-age-hours 6 --github-output
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then
+            echo "force=false" >> "$GITHUB_OUTPUT"
+            echo "线上数据仍新鲜 → 本轮跳过部署"
+          else
+            echo "force=true" >> "$GITHUB_OUTPUT"
+            echo "线上数据已过期或检查失败（rc=$RC）→ 本轮执行部署"
+          fi
+
       - name: 恢复 media.db（从 Release 资产，绕过 git 100MB 限制）
+        if: steps.fresh.outputs.force == 'true'
         # 关键修复：media.db 被 gitignore，全新检出为空。本工作流此前无此步，
         # 直接用空库 generate 并部署，把途播/网页数据清空。现先拉回生产库再生成。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python scripts/db_store.py download
+        # --require-asset：Release 里没有库就直接失败，绝不拿空库去 deploy
+        #（Pages 部署成功但内容为空 = 线上站点被清空，且不会回退到旧版本）。
+        run: python scripts/db_store.py download --require-asset
 
       - name: 修正被采集站误标为电影的电视晚会（改判为综艺，幂等）
+        if: steps.fresh.outputs.force == 'true'
         # 源站常把春节联欢晚会 / 跨年晚会 / 元宵喜乐会挂在电影类目下，导致电影墙前排
         # 混进大量晚会卡片。改 DB 而不是改生成代码 —— 这样 web / 途播 JSON / Jellyfin /
         # M3U / 增量 KV 全部下游自动一致。判定统一走 generator.m3u.is_tv_gala。
         run: python scripts/fix_gala_categories.py --apply
 
       - name: 生成 M3U / Web / 途播 Jellyfin 分片数据
+        if: steps.fresh.outputs.force == 'true'
         env:
           WEB_STRICT_HEALTH: 1
         run: |
@@ -81,6 +130,7 @@ jobs:
           python generate_movies_json.py
 
       - name: 生成电影墙分类封面 + 直播台标
+        if: steps.fresh.outputs.force == 'true'
         # 封面是部署产物的一部分（途播分类视图 + 直播频道台标均依赖），必须每次都生成，
         # 不可因 REGEN_COVERS=false 跳过，否则直播频道封面空白。
         run: |
@@ -88,18 +138,21 @@ jobs:
           python scripts/generate_covers.py
 
       - name: 生成直连分流规则（来自 media.db，自动覆盖新 CDN 子域）
+        if: steps.fresh.outputs.force == 'true'
         # 手机开 VPN 访问 kaka-m3u.pages.dev 后端时，让国内视频 CDN 走直连。
         # 规则从 media.db 现抽现生成，源站换子域也能自动命中，不再手写维护。
         run: |
           python scripts/gen_direct_rules.py
 
       - name: 复制直连规则到站点（供 Shadowrocket/Clash 订阅，经 VPN 可达）
+        if: steps.fresh.outputs.force == 'true'
         run: |
           cp scripts/shadowrocket_direct_rules.list output/
           cp scripts/shadowrocket_direct_module.conf output/
           cp scripts/direct_rules_clash.yaml output/
 
       - name: 递增 DATA_VERSION（避免客户端/途播缓存旧数据）
+        if: steps.fresh.outputs.force == 'true'
         run: |
           VER="$(date +%Y%m%d%H)"
           sed -i "s/const DATA_VERSION = \".*\";/const DATA_VERSION = \"$VER\";/" output/_worker.js
@@ -107,6 +160,7 @@ jobs:
           grep "DATA_VERSION =" output/_worker.js
 
       - name: 生成 _headers（M3U Content-Type 修正 + 禁止缓存）
+        if: steps.fresh.outputs.force == 'true'
         run: |
           cat > output/_headers <<'EOF'
           /movie.m3u
@@ -187,11 +241,13 @@ jobs:
           EOF
 
       - name: 部署前体积闸门（Cloudflare Pages 单文件 25 MiB 硬上限）
+        if: steps.fresh.outputs.force == 'true'
         # 超限会导致【整个部署失败 + 站点回退到上次成功部署（表现为内容为空）】，
         # 因此在部署前就点名超限文件并直接失败，避免只能靠 wrangler 报错倒推。
         run: python scripts/check_output_size.py output
 
       - name: 部署到 Cloudflare Pages（裸域名 kaka-m3u.pages.dev，由 main 分支提供）
+        if: steps.fresh.outputs.force == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

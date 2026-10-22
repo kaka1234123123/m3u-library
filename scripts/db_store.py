@@ -140,9 +140,19 @@ def _download_asset_bytes(asset, token):
         return None
 
 
-def cmd_download(token):
+def cmd_download(token, require_asset=False):
+    """拉回 media.db。
+
+    require_asset=True 时，Release 里没有可用资产就算失败（退出码 2），
+    而不是「从空库开始」（退出码 0）。部署链路必须用这个模式：
+    空库 + generate + deploy 会把线上站点清空，而 Pages 部署失败时又回退到
+    上次成功版本，症状是「站点内容突然空了」且难以定位。
+    """
     status, rel = get_release(token)
     if status == 404:
+        if require_asset:
+            print("DB_STORE_ERR: Release 不存在（require_asset 模式，拒绝以空库继续）")
+            return 2
         print("DB_STORE: 无 Release 资产（首次运行），从空库开始采集")
         return 0
     if status != 200:
@@ -161,6 +171,9 @@ def cmd_download(token):
             comp = "gz"
 
     if not asset:
+        if require_asset:
+            print("DB_STORE_ERR: Release 中无 media.db 资产（require_asset 模式，拒绝以空库继续）")
+            return 2
         print("DB_STORE: Release 存在但无 media.db 资产，从空库开始")
         return 0
 
@@ -289,17 +302,22 @@ def cmd_upload(token):
 
 
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("download", "upload"):
-        print("用法: python scripts/db_store.py [download|upload]")
+    argv = sys.argv[1:]
+    # --require-asset：download 时要求 Release 里必须已有可用资产，缺库即失败。
+    # 部署链路用这个模式（空库部署会清空线上站点）；采集链路不用（首次运行要能空库起步）。
+    require_asset = "--require-asset" in argv
+    argv = [a for a in argv if a != "--require-asset"]
+    if not argv or argv[0] not in ("download", "upload"):
+        print("用法: python scripts/db_store.py [download|upload] [--require-asset]")
         sys.exit(3)
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if not token:
         print("DB_STORE_ERR: 缺少 GITHUB_TOKEN 环境变量")
         sys.exit(3)
-    cmd = sys.argv[1]
+    cmd = argv[0]
     t0 = time.time()
     if cmd == "download":
-        rc = cmd_download(token)
+        rc = cmd_download(token, require_asset=require_asset)
     else:
         rc = cmd_upload(token)
     print(f"DB_STORE: {cmd} 完成，耗时 {time.time()-t0:.1f}s，退出码 {rc}")

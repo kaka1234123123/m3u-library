@@ -5,7 +5,12 @@ name: 每日自动更新
 # -> 每个 run 在「提交数据库变更」步骤失败 -> 触发 GitHub 失败邮件。
 # 串行化后，后启动的 run 在 checkout 时即已包含前一个 run 推送的 media.db，推送为快进合并，不再冲突。
 concurrency:
-  group: m3u-collection
+  # 独立并发组（2026-10-22 改）：此前 fast-collect / update / deploy 三个工作流共用
+  # 「m3u-collection」一个组，而 fast-collect 是自触发接力链（每轮结束派发下一轮，
+  # 背靠背约 30 分钟一轮），几乎永远占着这个组 → update 与 deploy 长期排队，
+  # 实测 10-21 的「每日自动更新」queued 超过 17 小时未执行，线上数据停在 10-20。
+  # 拆分后：采集组只挡采集，部署组只挡部署，互不饿死。
+  group: m3u-collect
   cancel-in-progress: false
 
 # 每天北京时间 03:30 自动增量采集 -> 生成 M3U/Web -> 生成途播 Jellyfin 数据 -> 部署 Cloudflare Pages -> 提交数据库
@@ -65,7 +70,9 @@ jobs:
       - name: 恢复 media.db（从 Release 资产，绕过 git 100MB 限制）
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python scripts/db_store.py download
+        # --require-asset：本工作流末尾要部署，空库部署 = 线上站点被清空。
+        # Release 里没有库就直接失败，绝不拿空库 generate + deploy。
+        run: python scripts/db_store.py download --require-asset
 
       - name: 增量采集（按天轮换，3 天一循环全覆盖）
         if: ${{ inputs.MODE != 'full' }}

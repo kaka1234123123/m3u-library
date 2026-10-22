@@ -16,7 +16,12 @@ name: 并发采集（云端高频）
 # 部署闸门：仅 03/09/15/21 点且 media.db 有变化才重新生成+部署，节省 Cloudflare Pages 每月 500 次构建额度。
 
 concurrency:
-  group: m3u-collection
+  # 独立并发组（2026-10-22 改）：此前 fast-collect / update / deploy 三个工作流共用
+  # 「m3u-collection」一个组，而 fast-collect 是自触发接力链（每轮结束派发下一轮，
+  # 背靠背约 30 分钟一轮），几乎永远占着这个组 → update 与 deploy 长期排队，
+  # 实测 10-21 的「每日自动更新」queued 超过 17 小时未执行，线上数据停在 10-20。
+  # 拆分后：采集组只挡采集，部署组只挡部署，互不饿死。
+  group: m3u-collect
   cancel-in-progress: false
 
 on:
@@ -82,15 +87,21 @@ jobs:
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
-          # 部署频率：每天固定 1 次，保持前端(kaka-m3u.pages.dev)最新。
-          # Cloudflare Pages 免费 500 次构建/月；每天 1 次 × 3 项目 = 3 次/天 ≪ 500/月，不会触发限额邮件。
-          # 不再要求「采到新片(NEW>0)」才部署——近期增长多为 episodes 回填/URL 刷新(不产生新片)，
-          # 若仍卡 NEW>0 会导致前端长期冻结。故固定在 UTC 03:00(北京 11:00)那一轮强制部署。
-          HOUR=$(date +%H); MIN=$(date +%M)
-          if [ "$HOUR" = "3" ] && [ "$MIN" -lt 30 ]; then
-            echo "do_deploy=true" >> "$GITHUB_OUTPUT"
-          else
+          # 部署闸门：看「线上数据有多旧」，而不是看「现在是不是 03:00 整点」。
+          # 旧逻辑用 HOUR==3 && MIN<30 判定，但 GitHub 的 cron 会延迟数小时（实测 cron 每小时触发
+          # 也会拖到 2-5 小时），于是「03:00 前 30 分钟」这个窗口几乎永远错过 → 前端长期冻结。
+          # 新逻辑直接读线上 api/all.json 的 updated 字段：
+          #   - 线上数据 ≤ 6 小时 → 本轮不部署（省 Actions 分钟 + Pages 500次/月额度）
+          #   - 线上数据 > 6 小时 → 本轮部署，把刚采到的数据发布上去
+          # 采集每 30 分钟一轮，天然形成「最多 6 小时更新一次」的兜底，不再依赖 cron 准点。
+          set +e
+          python scripts/check_freshness.py --max-age-hours 6 --github-output
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then
             echo "do_deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "do_deploy=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 生成途播 Jellyfin 后端数据（api/movies.json + 地区分片）
