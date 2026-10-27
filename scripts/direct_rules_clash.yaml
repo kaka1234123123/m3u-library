@@ -59,6 +59,7 @@ rules:
   - DOMAIN-SUFFIX,bfvvs.com,DIRECT
   - DOMAIN-SUFFIX,bilibili.com,DIRECT
   - DOMAIN-SUFFIX,bkpcp.top,DIRECT
+  - DOMAIN-SUFFIX,btzx.com.cn,DIRECT
   - DOMAIN-SUFFIX,bvvvvvvv7f.com,DIRECT
   - DOMAIN-SUFFIX,bvvvvvvvvv1f.com,DIRECT
   - DOMAIN-SUFFIX,cbg.cn,DIRECT
@@ -158,6 +159,7 @@ rules:
   - DOMAIN-SUFFIX,ganzitv.com,DIRECT
   - DOMAIN-SUFFIX,gatv.com.cn,DIRECT
   - DOMAIN-SUFFIX,gggread.com,DIRECT
+  - DOMAIN-SUFFIX,githubusercontent.com,DIRECT
   - DOMAIN-SUFFIX,gstv.com.cn,DIRECT
   - DOMAIN-SUFFIX,gsuus.com,DIRECT
   - DOMAIN-SUFFIX,guzhenm.com,DIRECT
@@ -386,7 +388,6 @@ rules:
   - DOMAIN-SUFFIX,wdit.com.cn,DIRECT
   - DOMAIN-SUFFIX,wgslsw.com,DIRECT
   - DOMAIN-SUFFIX,wikimedia.org,DIRECT
-  - DOMAIN-SUFFIX,wjyanghu.com,DIRECT
   - DOMAIN-SUFFIX,wsrtv.com.cn,DIRECT
   - DOMAIN-SUFFIX,wsyzym3u8.com,DIRECT
   - DOMAIN-SUFFIX,wxhcgbds.com,DIRECT
