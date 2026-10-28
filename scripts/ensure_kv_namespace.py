@@ -22,7 +22,7 @@
 
 环境变量：
   CLOUDFLARE_API_TOKEN   必需，CF API Token
-  CLOUDFLARE_ACCOUNT_ID  可选，缺省用 DEFAULT_ACCOUNT_ID
+  CLOUDFLARE_ACCOUNT_ID  必需，无内置兜底（内置他人账号 id 会误写别人命名空间）
 
 退出码：
   0 成功（拿到 id，id 打印在 stdout 的 NS_ID= 之后）
