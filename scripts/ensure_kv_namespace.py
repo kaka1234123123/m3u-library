@@ -44,6 +44,32 @@ API = "https://api.cloudflare.com/client/v4"
 DEFAULT_TITLE = "m3u-delta"
 
 
+def verify_token(token):
+    """用官方 /user/tokens/verify 端点校验 token 本身是否有效。
+
+    Cloudflare 的 "Authentication error"（code 10000）有两种成因，症状完全一样：
+      1. token 本身无效/过期/被撤销
+      2. token 有效，但缺少访问该 API 所需的权限
+    verify 端点只校验 token 有效性（不需要任何资源权限），用它就能区分两者。
+    返回 (ok, detail)。
+    """
+    url = "%s/user/tokens/verify" % API
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Authorization", "Bearer " + token)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            body = json.loads(r.read().decode("utf-8", "replace"))
+        if body.get("success"):
+            res = body.get("result") or {}
+            return True, "token 有效（状态=%s，到期=%s）" % (
+                res.get("status", "?"), res.get("expires_on", "未设置"))
+        return False, "verify 返回 success=false"
+    except urllib.error.HTTPError as e:
+        return False, "verify 端点返回 HTTP %s（token 本身无效）" % e.code
+    except Exception as e:
+        return False, "verify 端点调用失败: %s" % e
+
+
 def _req(url, token, method="GET", payload=None):
     data = None
     if payload is not None:
@@ -102,6 +128,8 @@ def main():
     ap.add_argument("--account-id", default=None, help="CF 账号 ID（缺省取环境变量 CLOUDFLARE_ACCOUNT_ID）")
     ap.add_argument("--output-id-file", default=None, help="把 id 写入此文件（供 CI 注入 toml）")
     ap.add_argument("--dry-run", action="store_true", help="只查找，不创建")
+    ap.add_argument("--diagnose", action="store_true",
+                    help="只诊断 token 状态（验证有效性 + 试列 KV 命名空间），不做任何写操作")
     args = ap.parse_args()
 
     token = os.environ.get("CLOUDFLARE_API_TOKEN")
@@ -114,6 +142,25 @@ def main():
     if not account_id:
         print("ENSURE_KV_ERR: 缺少 CLOUDFLARE_ACCOUNT_ID（或 --account-id）", file=sys.stderr)
         return 3
+
+    if args.diagnose:
+        ok, detail = verify_token(token)
+        print("[diagnose] token 有效性: %s（%s）" % ("有效" if ok else "无效", detail))
+        try:
+            nss = list_namespaces(token, account_id)
+            print("[diagnose] KV 命名空间列表: 可访问，共 %d 个" % len(nss))
+            for ns in nss:
+                print("            - %s (%s)" % (ns.get("title"), ns.get("id")))
+            hit = next((n for n in nss if n.get("title") == args.title), None)
+            if hit:
+                print("[diagnose] 目标命名空间 '%s' 已存在，id=%s" % (args.title, hit.get("id")))
+            else:
+                print("[diagnose] 目标命名空间 '%s' 不存在（可创建）" % args.title)
+            print("NS_ID=")
+        except RuntimeError as e:
+            print("[diagnose] KV 命名空间列表: 失败 —— %s" % e)
+            print("NS_ID=")
+        return 0 if ok else 4
 
     try:
         ns_id = find_by_title(token, account_id, args.title)
@@ -132,17 +179,28 @@ def main():
     except RuntimeError as e:
         msg = str(e)
         # 区分「token 无效/过期」与「token 有效但缺 KV 权限」——
-        # 两者修法完全不同：前者要重新生成 token，后者要在 token 上补权限。
-        if "HTTP 401" in msg:
+        # 两者在 CF API 里的报错完全一样（code 10000 Authentication error），
+        # 必须用 /user/tokens/verify 端点才能区分开。
+        if "HTTP 401" in msg or "Authentication error" in msg:
+            ok, detail = verify_token(token)
             print("ENSURE_KV_ERR: %s" % msg, file=sys.stderr)
-            print("ENSURE_KV_HINT: CLOUDFLARE_API_TOKEN 无效或已过期。"
-                  "请在 Cloudflare 控制台重新生成 API Token 并更新仓库 Secret；"
-                  "若确认 token 有效，则它缺少 KV Storage 读写权限。", file=sys.stderr)
+            if ok:
+                print("ENSURE_KV_HINT: token 本身有效（%s），"
+                      "但访问 KV 命名空间被拒 —— 说明该 token 缺少 "
+                      "「Workers KV Storage:Edit」权限。" % detail, file=sys.stderr)
+                print("ENSURE_KV_HINT: 请到 Cloudflare 控制台 → My Profile → API Tokens → "
+                      "编辑该 Token，权限加上 Account 级别的「Workers KV Storage:Edit」，"
+                      "保存后重新生成 Token 并更新仓库 Secret CLOUDFLARE_API_TOKEN。",
+                      file=sys.stderr)
+            else:
+                print("ENSURE_KV_HINT: token 校验失败（%s）。"
+                      "请在 Cloudflare 控制台重新生成 API Token 并更新仓库 Secret。" % detail,
+                      file=sys.stderr)
         elif "HTTP 403" in msg:
             print("ENSURE_KV_ERR: %s" % msg, file=sys.stderr)
-            print("ENSURE_KV_HINT: CLOUDFLARE_API_TOKEN 有效但权限不足。"
-                  "请在 Cloudflare 控制台为该 Token 补上「Workers KV Storage:Edit」"
-                  "（以及 Account 级别读写），再更新 Secret。", file=sys.stderr)
+            print("ENSURE_KV_HINT: token 有效但权限不足。"
+                  "请为该 Token 补上「Workers KV Storage:Edit」（Account 级别），"
+                  "再更新 Secret。", file=sys.stderr)
         else:
             print("ENSURE_KV_ERR: %s" % msg, file=sys.stderr)
         return 4
