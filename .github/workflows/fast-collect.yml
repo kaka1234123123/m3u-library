@@ -104,6 +104,18 @@ jobs:
             echo "do_deploy=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: 同步增量到 KV（实时新片，热/冷分离）
+        # 每轮采集后把「自上次以来新增」的影片写入 Cloudflare KV，
+        # 使网页/途播在静态基库(每 6h 才部署)之间也能实时看到新片。
+        # 命名空间按标题 "m3u-delta" 自动解析（scripts/sync_delta_kv.py 内部逻辑），
+        # 无需把命名空间 id 当 Secret 注入。
+        # 写失败(配额/令牌/网络)不影响主流程；KV 写率约 240-400/天 ≪ 免费档 1000/天。
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python scripts/sync_delta_kv.py
+
       - name: 生成途播 Jellyfin 后端数据（api/movies.json + 地区分片）
         if: steps.collect.outputs.do_deploy == 'true'
         env:
@@ -269,6 +281,16 @@ jobs:
         run: |
           npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=main
           npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=production
+
+      - name: 清空 KV 增量（静态库已含全量，避免重复）
+        # 部署轮：静态基库已包含本轮及此前所有新片，清空 KV 增量(置 marker=now)，
+        # 下一轮起增量从零累积，直到下次部署再次清空。写失败不影响主流程。
+        if: steps.collect.outputs.do_deploy == 'true'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python scripts/sync_delta_kv.py --clear
 
       - name: 接力下一轮（自触发，背靠背约 30 分钟一轮）
         # 仅 repository_dispatch 触发的轮才接力(避免 cron/手动 双链倍乘); 且需本轮采到新片(changed)才续跑,

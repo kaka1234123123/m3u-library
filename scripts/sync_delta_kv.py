@@ -60,7 +60,8 @@ INDEX_KEY_FMT = "delta:idx:{}"
 ROUND_KEY_FMT = "delta:{}{}"   # delta:{roundId} 或 delta:{roundId}:{part}
 MARKER_KEY = "delta:marker"
 DELTA_NS_TITLE = "m3u-delta"   # KV 命名空间标题；脚本按标题自动解析 ID，无需把 ID 当 Secret 注入
-DEFAULT_ACCOUNT_ID = "62dc1dfbe3b880e9c16017687aac9717"   # 兜底账户 ID（优先用 CLOUDFLARE_ACCOUNT_ID Secret）
+# 兜底账户 ID 已移除：不同 fork / 不同 CF 账号各不相同，内置他人账号 id 会导致
+# 误写别人账号下的 KV 命名空间。必须由 CLOUDFLARE_ACCOUNT_ID Secret 显式提供。
 
 
 # ---------- 规范影片记录构建（复用 generate_movies_json，失败回退本地副本）----------
@@ -384,7 +385,10 @@ def split_by_bytes(movies, max_bytes):
 
 def run(args):
     token = args.token or os.environ.get("CLOUDFLARE_API_TOKEN")
-    account_id = args.account_id or os.environ.get("CLOUDFLARE_ACCOUNT_ID") or DEFAULT_ACCOUNT_ID
+    account_id = args.account_id or os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+    if not account_id:
+        print("[sync_delta_kv] 缺少 CLOUDFLARE_ACCOUNT_ID，跳过增量同步")
+        return 0
     ns_id = args.kv_id or os.environ.get("KV_DELTA_ID")
     dry = args.dry_run
 

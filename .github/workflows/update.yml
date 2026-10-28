@@ -150,6 +150,17 @@ jobs:
         run: |
           python scripts/fetch_live_logos.py --workers 16
 
+      - name: 同步增量到 KV（实时新片，热/冷分离）
+        # 与 fast-collect 同理：每日全量采集到的新片也写入 KV，
+        # 否则每日更新链路采集的新片只能等静态基库下次部署才可见。
+        # 命名空间按标题 "m3u-delta" 自动解析，无需把命名空间 id 当 Secret 注入。
+        # 写失败(配额/令牌/网络)不影响主流程。
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python scripts/sync_delta_kv.py
+
       - name: 生成途播 Jellyfin 后端数据（api/movies.json + 地区分片）
         # 关键：途播后端 worker 在运行时 fetch 此 JSON 渲染海报墙。
         # 此前工作流只生成 M3U/Web，从不生成它，导致途播每日更新“看似完成”实则数据没变。
@@ -325,3 +336,44 @@ jobs:
           # production 分支仅作别名/预览，顺带同步以保持一致。
           npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=main
           npx --yes wrangler@4 pages deploy output --project-name=kaka-m3u --branch=production
+
+      - name: 清空 KV 增量（静态库已含全量，避免重复）
+        # 静态基库已包含本轮及此前所有新片，清空 KV 增量(置 marker=now)，
+        # 下一轮起增量从零累积，直到下次部署再次清空。写失败不影响主流程。
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python scripts/sync_delta_kv.py --clear
+
+      - name: 确保 KV 命名空间存在并注入 id
+        id: kv
+        # 按标题 "m3u-delta" 幂等定位/创建 KV 命名空间，再把 id 注入
+        # jellyfin/wrangler.toml 的 __KV_DELTA_ID__ 占位符。
+        # 不硬编码 id：每个 CF 账号的命名空间 id 都不同，沿用上游写死的 id
+        # 会把增量数据写进别人的命名空间。
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          NS_ID="$(python scripts/ensure_kv_namespace.py | sed -n 's/^NS_ID=//p')"
+          if [ -z "$NS_ID" ]; then
+            echo "KV_ERR: 未能解析 KV 命名空间 id，跳过 jellyfin worker 部署"
+            echo "kv_id=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "kv_id=$NS_ID" >> "$GITHUB_OUTPUT"
+          sed -i "s|__KV_DELTA_ID__|$NS_ID|g" jellyfin/wrangler.toml
+          grep -A1 "kv_namespaces" jellyfin/wrangler.toml
+
+      - name: 部署途播 Jellyfin Worker（含 KV_DELTA 实时增量合并）
+        if: steps.kv.outputs.kv_id != ''
+        # 独立的 Workers 服务（m3u-jellyfin），与 Pages 上的 _worker.js 是同一套
+        # Jellyfin 兼容层的两份副本 —— 两处改动必须一起提交，否则行为不一致。
+        # 该 worker 额外绑定 KV_DELTA：静态基库每 6h 才部署一次，而新片经 KV
+        # 即时呈现，实现「0 部署、数据实时同步」。
+        # 无 KV 绑定时 worker 侧 deltaEnabled()=false，自动降级纯静态。
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4 deploy --config jellyfin/wrangler.toml
