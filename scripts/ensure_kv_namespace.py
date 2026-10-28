@@ -50,11 +50,17 @@ def _req(url, token, method="GET", payload=None):
         data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", "Bearer " + token)
-    req.add_header("Content-Type", "application/json")
-    # CF API 在 CI / 本机均直连可达，不走系统代理（避免代理把 CF API 请求带到境外出口）。
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    # ⚠️ Content-Type 只在真正带 body 时才加。
+    #    带在 GET 请求上会让 Cloudflare 判定为「声明了 JSON body」，对
+    #    某些 token 直接返回 HTTP 401 Authentication error —— 而同一个
+    #    token 不带这个头时列表接口完全正常（scripts/sync_delta_kv.py
+    #    的 resolve_ns_id 就是这么写的）。
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    # 与 scripts/sync_delta_kv.py 保持一致：用默认 opener，
+    # 让 CI/本机的代理设置按需生效。
     try:
-        with opener.open(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=60) as r:
             return json.loads(r.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:400]

@@ -273,7 +273,12 @@ class KVClient:
         data = body.encode("utf-8") if isinstance(body, str) else body
         req = urllib.request.Request(url, data=data, method=method)
         req.add_header("Authorization", "Bearer " + self.token)
-        req.add_header("Content-Type", "application/json")
+        # ⚠️ Content-Type 只在真正带 body 时才加。
+        #    无条件加在 GET/DELETE 上会让 Cloudflare 判定为「声明了 JSON body」，
+        #    对某些 token 直接返回 HTTP 401 Authentication error。
+        #    KV 写入的值是纯文本（分片 JSON 字符串），用 text/plain 更准确。
+        if data is not None:
+            req.add_header("Content-Type", "text/plain;charset=UTF-8")
         try:
             with self.opener.open(req, timeout=60) as r:
                 txt = r.read().decode("utf-8", "replace")
