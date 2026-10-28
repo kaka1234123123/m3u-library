@@ -352,13 +352,19 @@ jobs:
         # jellyfin/wrangler.toml 的 __KV_DELTA_ID__ 占位符。
         # 不硬编码 id：每个 CF 账号的命名空间 id 都不同，沿用上游写死的 id
         # 会把增量数据写进别人的命名空间。
+        #
+        # 取不到 id 时不阻塞 worker 部署：把 KV 绑定整段摘掉，worker 侧
+        # deltaEnabled()=false 会自动降级为纯静态。客户端兼容修复照样上线，
+        # 只是暂时没有「0 部署实时增量」这一层。
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          NS_ID="$(python scripts/ensure_kv_namespace.py | sed -n 's/^NS_ID=//p')"
+          NS_ID="$(python scripts/ensure_kv_namespace.py 2>&1 | tee /tmp/kv_out.txt | sed -n 's/^NS_ID=//p')"
           if [ -z "$NS_ID" ]; then
-            echo "KV_ERR: 未能解析 KV 命名空间 id，跳过 jellyfin worker 部署"
+            echo "::warning::未能解析 KV 命名空间 id，将以无 KV 绑定方式部署 worker（降级为纯静态）"
+            grep -E "ENSURE_KV" /tmp/kv_out.txt || true
+            python scripts/strip_kv_binding.py jellyfin/wrangler.toml
             echo "kv_id=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -367,7 +373,6 @@ jobs:
           grep -A1 "kv_namespaces" jellyfin/wrangler.toml
 
       - name: 部署途播 Jellyfin Worker（含 KV_DELTA 实时增量合并）
-        if: steps.kv.outputs.kv_id != ''
         # 独立的 Workers 服务（m3u-jellyfin），与 Pages 上的 _worker.js 是同一套
         # Jellyfin 兼容层的两份副本 —— 两处改动必须一起提交，否则行为不一致。
         # 该 worker 额外绑定 KV_DELTA：静态基库每 6h 才部署一次，而新片经 KV

@@ -124,7 +124,21 @@ def main():
                 return 4
             print("[ensure_kv] 已创建命名空间 '%s'，id=%s" % (args.title, ns_id))
     except RuntimeError as e:
-        print("ENSURE_KV_ERR: %s" % e, file=sys.stderr)
+        msg = str(e)
+        # 区分「token 无效/过期」与「token 有效但缺 KV 权限」——
+        # 两者修法完全不同：前者要重新生成 token，后者要在 token 上补权限。
+        if "HTTP 401" in msg:
+            print("ENSURE_KV_ERR: %s" % msg, file=sys.stderr)
+            print("ENSURE_KV_HINT: CLOUDFLARE_API_TOKEN 无效或已过期。"
+                  "请在 Cloudflare 控制台重新生成 API Token 并更新仓库 Secret；"
+                  "若确认 token 有效，则它缺少 KV Storage 读写权限。", file=sys.stderr)
+        elif "HTTP 403" in msg:
+            print("ENSURE_KV_ERR: %s" % msg, file=sys.stderr)
+            print("ENSURE_KV_HINT: CLOUDFLARE_API_TOKEN 有效但权限不足。"
+                  "请在 Cloudflare 控制台为该 Token 补上「Workers KV Storage:Edit」"
+                  "（以及 Account 级别读写），再更新 Secret。", file=sys.stderr)
+        else:
+            print("ENSURE_KV_ERR: %s" % msg, file=sys.stderr)
         return 4
 
     # 输出给 CI 捕获：NS_ID=<id>
