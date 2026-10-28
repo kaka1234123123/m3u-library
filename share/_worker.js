@@ -1,4 +1,4 @@
-// 秦哥影视资源 - 分享站访问网关（一人一码 + IP 异常监测）
+// 卡卡影视资源 - 分享站访问网关（一人一码 + IP 异常监测）
 // 管理面板：https://qs-agcl2.pages.dev/__admin
 const ADMIN_PASSWORD = "031985";   // 管理面板登录口令
 const SITE_URL = "https://qs-agcl2.pages.dev";
@@ -246,7 +246,7 @@ async function flushStats(env, code) {
 const LOGIN_HTML = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
-<title>秦哥影视资源</title>
+<title>卡卡影视资源</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{min-height:100vh;display:flex;align-items:center;justify-content:center;
@@ -267,7 +267,7 @@ const LOGIN_HTML = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8
     font-size:11px;color:#6b7280;text-align:center;line-height:1.7}
 </style></head><body>
 <form class="box" method="POST" action="/__login" autocomplete="off">
-  <div class="t">秦哥影视资源</div>
+  <div class="t">卡卡影视资源</div>
   <div class="sub">请输入你的专属邀请码</div>
   <input name="code" type="text" maxlength="6" autofocus required placeholder="邀请码">
   <button type="submit">进入</button>
@@ -504,7 +504,7 @@ function showCode(code) {
 function copyAll(code) {
   const SITE2 = location.origin;
   const text =
-    '秦哥影视资源\\n' +
+    '卡卡影视资源\\n' +
     '网页（扫码/点击进入）：' + SITE2 + '/?pwd=' + code + '\\n' +
     '播放器 M3U 源地址：\\n' +
     '电影：' + SITE2 + '/movie.m3u?key=' + code + '\\n' +
@@ -570,7 +570,7 @@ function popupHTML(code, user, anomaly, devs) {
 <div id="qg-pn-ov">
   <div id="qg-pn-box"${isAnomaly ? ' class="qg-warnbox"' : ""}>
     <div class="qg-pn-logo">秦</div>
-    <div class="qg-pn-t">秦哥影视资源</div>
+    <div class="qg-pn-t">卡卡影视资源</div>
     <div class="qg-pn-s">专属邀请码 · 仅限本人使用</div>
     ${banner}
     <div class="qg-pn-code">

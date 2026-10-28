@@ -161,7 +161,7 @@ def build_rules(hosts):
 def render_shadowrocket(suffix, keyword):
     lines = []
     lines.append("# ===========================================================")
-    lines.append("# 秦哥影视 / 途播 - 国内视频 CDN 直连规则 (Shadowrocket 订阅)")
+    lines.append("# 卡卡影视 / 途播 - 国内视频 CDN 直连规则 (Shadowrocket 订阅)")
     lines.append("# 自动生成自 data/media.db（脚本 scripts/gen_direct_rules.py）")
     lines.append("# 用途：手机开 VPN 访问 kaka-m3u.pages.dev 后端的同时，")
     lines.append("#        让国内视频 CDN 走本地直连（不被 VPN 代理拦截）。")
@@ -182,7 +182,7 @@ def render_shadowrocket(suffix, keyword):
 
 def render_clash(suffix, keyword):
     lines = []
-    lines.append("# 秦哥影视 / 途播 - 直连规则 (Clash 格式，自动生成)")
+    lines.append("# 卡卡影视 / 途播 - 直连规则 (Clash 格式，自动生成)")
     lines.append("# 后端强制代理；其余国内视频 CDN 直连")
     lines.append("rules:")
     for d in BACKEND_PROXY:
@@ -204,7 +204,7 @@ def render_module(suffix, keyword):
     填进「订阅」会被当成节点订阅而报「不能获取订阅节点」）。
     """
     lines = []
-    lines.append("#!name=秦哥影视·国内源直连分流")
+    lines.append("#!name=卡卡影视·国内源直连分流")
     lines.append("#!desc=从媒体库自动生成：国内视频CDN直连，海外后端强制代理。经订阅可自动更新。")
     lines.append("#!author=kaka-m3u")
     lines.append("")

@@ -607,11 +607,11 @@ def generate_live_card_covers():
 
 # 统一库分类视图封面（途播 Jellyfin 后端）：电影/直播/剧集/综艺/动漫
 CATEGORY_COVERS = [
-    ("秦哥影视", "电影", "#1B4B6B", "#2E86AB", False, "MOVIE", "movie", "cat_movie"),
-    ("秦哥影视", "直播", "#8E2323", "#C0392B", False, "LIVE", "cat", "cat_live"),
-    ("秦哥影视", "剧集", "#5B2C6F", "#8E44AD", False, "SERIES", "cat", "cat_tv"),
-    ("秦哥影视", "综艺", "#B9770E", "#E67E22", False, "VARIETY", "cat", "cat_variety"),
-    ("秦哥影视", "动漫", "#1E6F5C", "#2ECC9B", False, "ANIME", "cat", "cat_anime"),
+    ("卡卡影视", "电影", "#1B4B6B", "#2E86AB", False, "MOVIE", "movie", "cat_movie"),
+    ("卡卡影视", "直播", "#8E2323", "#C0392B", False, "LIVE", "cat", "cat_live"),
+    ("卡卡影视", "剧集", "#5B2C6F", "#8E44AD", False, "SERIES", "cat", "cat_tv"),
+    ("卡卡影视", "综艺", "#B9770E", "#E67E22", False, "VARIETY", "cat", "cat_variety"),
+    ("卡卡影视", "动漫", "#1E6F5C", "#2ECC9B", False, "ANIME", "cat", "cat_anime"),
 ]
 
 
