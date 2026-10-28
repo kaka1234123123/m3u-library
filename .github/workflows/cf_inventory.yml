@@ -1,0 +1,68 @@
+name: 一次性 · Cloudflare 资源盘点
+
+# ⚠️ 临时 workflow：盘点账号下的 Pages / Workers / KV 资源，只读，不做任何修改。
+# 盘点完成后连同删除脚本一起清理。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 盘点 Cloudflare 资源
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -e
+          ACC="$CLOUDFLARE_ACCOUNT_ID"
+          API="https://api.cloudflare.com/client/v4"
+
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$ACC" ]; then
+            echo "缺少凭据"; exit 1
+          fi
+
+          # 1) Token 自身状态
+          echo "===== TOKEN 状态 ====="
+          curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+               "$API/user/tokens/verify" | head -c 600; echo
+
+          # 2) 账号信息
+          echo "===== 账号信息 ====="
+          curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+               "$API/accounts/$ACC" | head -c 600; echo
+
+          # 3) Pages 项目
+          echo "===== PAGES 项目 ====="
+          curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+               "$API/accounts/$ACC/pages/projects" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);r=d.get('result') or [];print('count=',len(r));[print('  -',p.get('name'),'| domains:',[x.get('name') for x in (p.get('domains') or [])]) for p in r]" || echo "(读取失败)"
+
+          # 4) Workers 脚本
+          echo "===== WORKERS 脚本 ====="
+          curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+               "$API/accounts/$ACC/workers/scripts" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);r=d.get('result') or [];print('count=',len(r));[print('  -',s.get('id'),'| modified:',s.get('modified_on')) for s in r]" || echo "(读取失败)"
+
+          # 5) KV 命名空间
+          echo "===== KV 命名空间 ====="
+          curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+               "$API/accounts/$ACC/storage/kv/namespaces" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);r=d.get('result') or [];print('count=',len(r));[print('  -',n.get('title'),'|',n.get('id')) for n in r]" || echo "(读取失败)"
+
+          # 6) R2 / D1 等其他资源（只列名字，不动）
+          echo "===== R2 buckets ====="
+          curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+               "$API/accounts/$ACC/r2/buckets" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);r=(d.get('result') or {}).get('buckets') or [];print('count=',len(r));[print('  -',b.get('name')) for b in r]" || echo "(读取失败)"
+
+          echo "===== D1 数据库 ====="
+          curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+               "$API/accounts/$ACC/d1/database" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);r=d.get('result') or [];print('count=',len(r));[print('  -',x.get('uuid'),'|',x.get('name')) for x in r]" || echo "(读取失败)"
