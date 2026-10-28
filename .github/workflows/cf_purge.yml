@@ -8,7 +8,9 @@ name: 一次性 · 删除全部 Cloudflare 资源
 # 删除后无法恢复，域名（kaka-m3u.pages.dev 等）立即失效。
 #
 # 仅手动触发时执行，且需在 inputs 中输入 CONFIRM=DELETE-ALL 二次确认。
-on:
+# 注：on 必须加引号 —— YAML 1.1 会把裸 on 解析成布尔 True，GitHub 就认不出
+# workflow_dispatch 触发器（API 报 422 "does not have 'workflow_dispatch' trigger"）。
+"on":
   workflow_dispatch:
     inputs:
       confirm:
@@ -46,107 +48,63 @@ jobs:
           API="https://api.cloudflare.com/client/v4"
           H="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 
-          # 列出并删除 Pages 项目
+          # 把 API 结果里的名字列表抽成纯文本（每行一个）
+          names_of() { python3 -c 'import sys,json;d=json.load(sys.stdin);r=d.get("result");r=[r] if isinstance(r,dict) else (r or []);print("\n".join(str(x.get("name") or x.get("id") or "") for x in r if (x.get("name") or x.get("id"))))'; }
+
           echo "===== 删除 Pages 项目 ====="
-          PAGES=$(curl -s -H "$H" "$API/accounts/$ACC/pages/projects")
-          NAMES=$(echo "$PAGES" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-res = d.get('result')
-if isinstance(res, dict): res = [res]
-print('\n'.join(p.get('name','') for p in (res or []) if p.get('name')))
-")
-          if [ -z "$NAMES" ]; then
-            echo "无 Pages 项目"
-          else
+          NAMES=$(curl -s -H "$H" "$API/accounts/$ACC/pages/projects" | names_of)
+          if [ -z "$NAMES" ]; then echo "无 Pages 项目"; else
             for n in $NAMES; do
               echo "--- 删除 Pages: $n ---"
               curl -s -X DELETE -H "$H" "$API/accounts/$ACC/pages/projects/$n" -w "  HTTP %{http_code}\n"
             done
           fi
 
-          # 列出并删除 Workers 脚本
           echo "===== 删除 Workers 脚本 ====="
-          SCRIPTS=$(curl -s -H "$H" "$API/accounts/$ACC/workers/scripts")
-          IDS=$(echo "$SCRIPTS" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-print('\n'.join(s.get('id','') for s in (d.get('result') or []) if s.get('id')))
-")
-          if [ -z "$IDS" ]; then
-            echo "无 Workers 脚本"
-          else
+          IDS=$(curl -s -H "$H" "$API/accounts/$ACC/workers/scripts" | names_of)
+          if [ -z "$IDS" ]; then echo "无 Workers 脚本"; else
             for i in $IDS; do
               echo "--- 删除 Worker: $i ---"
               curl -s -X DELETE -H "$H" "$API/accounts/$ACC/workers/scripts/$i" -w "  HTTP %{http_code}\n"
             done
           fi
 
-          # 删除 KV 命名空间
           echo "===== 删除 KV 命名空间 ====="
-          KV=$(curl -s -H "$H" "$API/accounts/$ACC/storage/kv/namespaces")
-          KVIDS=$(echo "$KV" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-print('\n'.join(n.get('id','') for n in (d.get('result') or []) if n.get('id')))
-")
-          if [ -z "$KVIDS" ]; then
-            echo "无 KV 命名空间"
-          else
+          KVIDS=$(curl -s -H "$H" "$API/accounts/$ACC/storage/kv/namespaces" | names_of)
+          if [ -z "$KVIDS" ]; then echo "无 KV 命名空间"; else
             for i in $KVIDS; do
               echo "--- 删除 KV: $i ---"
               curl -s -X DELETE -H "$H" "$API/accounts/$ACC/storage/kv/namespaces/$i" -w "  HTTP %{http_code}\n"
             done
           fi
 
-          # 删除 R2 bucket
           echo "===== 删除 R2 bucket ====="
-          R2=$(curl -s -H "$H" "$API/accounts/$ACC/r2/buckets")
-          R2N=$(echo "$R2" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-print('\n'.join(b.get('name','') for b in ((d.get('result') or {}).get('buckets') or []) if b.get('name')))
-")
-          if [ -z "$R2N" ]; then
-            echo "无 R2 bucket"
-          else
+          R2N=$(curl -s -H "$H" "$API/accounts/$ACC/r2/buckets" | python3 -c 'import sys,json;d=json.load(sys.stdin);r=(d.get("result") or {}).get("buckets") or [];print("\n".join(b.get("name","") for b in r if b.get("name")))')
+          if [ -z "$R2N" ]; then echo "无 R2 bucket"; else
             for b in $R2N; do
               echo "--- 删除 R2: $b ---"
               curl -s -X DELETE -H "$H" "$API/accounts/$ACC/r2/buckets/$b" -w "  HTTP %{http_code}\n"
             done
           fi
 
-          # 删除 D1 数据库
           echo "===== 删除 D1 数据库 ====="
-          D1=$(curl -s -H "$H" "$API/accounts/$ACC/d1/database")
-          D1IDS=$(echo "$D1" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-print('\n'.join(x.get('uuid','') for x in (d.get('result') or []) if x.get('uuid')))
-")
-          if [ -z "$D1IDS" ]; then
-            echo "无 D1 数据库"
-          else
+          D1IDS=$(curl -s -H "$H" "$API/accounts/$ACC/d1/database" | names_of)
+          if [ -z "$D1IDS" ]; then echo "无 D1 数据库"; else
             for i in $D1IDS; do
               echo "--- 删除 D1: $i ---"
               curl -s -X DELETE -H "$H" "$API/accounts/$ACC/d1/database/$i" -w "  HTTP %{http_code}\n"
             done
           fi
 
-          # 复查：确认已清空
           echo "===== 删除后复查 ====="
           echo "-- Pages --"
-          curl -s -H "$H" "$API/accounts/$ACC/pages/projects" \
-            | python3 -c "import sys,json;d=json.load(sys.stdin);r=d.get('result');r=[r] if isinstance(r,dict) else (r or []);print('剩余:',len(r),[p.get('name') for p in r])"
+          curl -s -H "$H" "$API/accounts/$ACC/pages/projects" | names_of | sed 's/^/  剩余: /'
           echo "-- Workers --"
-          curl -s -H "$H" "$API/accounts/$ACC/workers/scripts" \
-            | python3 -c "import sys,json;d=json.load(sys.stdin);r=d.get('result') or [];print('剩余:',len(r),[s.get('id') for s in r])"
+          curl -s -H "$H" "$API/accounts/$ACC/workers/scripts" | names_of | sed 's/^/  剩余: /'
           echo "-- KV --"
-          curl -s -H "$H" "$API/accounts/$ACC/storage/kv/namespaces" \
-            | python3 -c "import sys,json;d=json.load(sys.stdin);r=d.get('result') or [];print('剩余:',len(r),[n.get('title') for n in r])"
+          curl -s -H "$H" "$API/accounts/$ACC/storage/kv/namespaces" | names_of | sed 's/^/  剩余: /'
           echo "-- R2 --"
-          curl -s -H "$H" "$API/accounts/$ACC/r2/buckets" \
-            | python3 -c "import sys,json;d=json.load(sys.stdin);r=(d.get('result') or {}).get('buckets') or [];print('剩余:',len(r),[b.get('name') for b in r])"
+          curl -s -H "$H" "$API/accounts/$ACC/r2/buckets" | python3 -c 'import sys,json;d=json.load(sys.stdin);r=(d.get("result") or {}).get("buckets") or [];print("  剩余:",len(r))'
           echo "-- D1 --"
-          curl -s -H "$H" "$API/accounts/$ACC/d1/database" \
-            | python3 -c "import sys,json;d=json.load(sys.stdin);r=d.get('result') or [];print('剩余:',len(r))"
+          curl -s -H "$H" "$API/accounts/$ACC/d1/database" | names_of | sed 's/^/  剩余: /'
+          echo "（以上为空即已全部删除）"
