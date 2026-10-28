@@ -101,6 +101,10 @@ function json(obj, status = 200) {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "access-control-allow-origin": "*",
+      // 与 output/_worker.js 对齐：Jellyfin API 响应禁客户端缓存——
+      // 无缓存头时 iOS NSURLCache 会启发式缓存，陈旧 PlaybackInfo
+      // 会让通用客户端点播放直接本地判死、不发请求。
+      "cache-control": "no-store",
     },
   });
 }
@@ -380,6 +384,28 @@ function proxyRoute(url) {
   return proxyFetch(u, url.origin);
 }
 
+// 与 output/_worker.js 的 makeStreams 保持同步：逐字段复刻真实 Jellyfin 响应，
+// 部分通用客户端（carTV 等）用严格模型解码，缺字段 → 解码失败 → 秒败不发流请求。
+function makeStreams() {
+  return [
+    {
+      Type: "Video", Codec: "h264", IsVideo: true, IsDefault: true, IsExternal: false,
+      Index: 0, Level: 40, BitRate: 2000000, BitDepth: 8, Width: 1920, Height: 1080,
+      AspectRatio: "16:9", IsInterlaced: false, IsAVC: true, IsForced: false,
+      IsHearingImpaired: false, IsTextSubtitleStream: false, SupportsExternalStream: false,
+      VideoRange: "SDR", VideoRangeType: "SDR",
+      Language: "und", DisplayTitle: "1080p H264", Title: "1080p H264",
+    },
+    {
+      Type: "Audio", Codec: "aac", IsAudio: true, IsDefault: true, IsExternal: false,
+      Index: 1, BitRate: 128000, Channels: 2, SampleRate: 44100, ChannelLayout: "stereo",
+      IsForced: false, IsHearingImpaired: false, IsTextSubtitleStream: false,
+      SupportsExternalStream: false, Language: "und",
+      DisplayTitle: "Chinese - AAC - Stereo", Title: "Chinese",
+    },
+  ];
+}
+
 function playbackInfo(data, delta, id, origin) {
   const m = getById(id, data, delta);
   if (!m) return json({ MediaSources: [] }, 404);
@@ -387,31 +413,60 @@ function playbackInfo(data, delta, id, origin) {
     ? m.sources
     : (m.url ? [m.url] : []);
   if (!sources.length) return json({ MediaSources: [] }, 404);
+  // ⚠️ PlaySessionId 必须是标准 UUID（部分客户端严格解析）；
+  // 路径带 .mp4 后缀（部分客户端校验 URL 扩展名与 Container 一致）
+  const sessionId = crypto.randomUUID();
   const mediaSources = sources.map((u, i) => {
-    const path = origin + "/Videos/" + m.id + "/stream?src=" + i;
+    const path = origin + "/Videos/" + m.id + "/stream.mp4?src=" + i;
+    // ⚠️ 与 output/_worker.js 同步：DirectStreamUrl/TranscodingUrl 用相对路径
+    // （真实 Jellyfin/Emby 约定，客户端自己拼服务器地址；绝对 URL 会被拼接成
+    // 垃圾 URL → 客户端本地解析失败、点播放秒败零请求）。
+    const relPath = "/Videos/" + m.id + "/stream.mp4?src=" + i;
     return {
       Protocol: "Http",
       Id: m.id + "-" + i,
       Path: path,
-      DirectStreamUrl: path,
+      DirectStreamUrl: relPath,
       Type: "Default",
-      Container: "m3u8",
-      IsRemote: false,
+      // ⚠️ 与 output/_worker.js 保持同步：容器必须报 "mp4" 进通用客户端
+      // 直连白名单（carTV 的 DeviceProfile 直连只认 mp4,m4v,mov），
+      // 报 "m3u8" 会被能力匹配判死 → 点播放秒败且不发流请求。
+      Container: "mp4",
+      // ⚠️ 与 output/_worker.js 的 playbackInfo 保持同步：
+      // IsRemote 必须为 true（Path 是 http URL），且必须给 TranscodingUrl 回退位，
+      // 否则 carTV 等通用客户端播放方式协商失败 → 点播放秒败且不发流请求。
+      IsRemote: true,
       SupportsDirectStream: true,
       SupportsDirectPlay: true,
+      SupportsProbing: false,
+      RequiresOpening: false,
+      RequiresClosing: false,
+      RequiresLooping: false,
+      IsInfiniteStream: false,
+      SupportsTranscoding: true,
+      TranscodingUrl: "/Videos/" + m.id + "/master.m3u8?MediaSourceId=" + m.id + "-" + i + "&PlaySessionId=" + sessionId + "&VideoCodec=h264&AudioCodec=aac&TranscodingProtocol=hls&TranscodingContainer=ts&api_key=m3u-jellyfin-token",
+      TranscodingSubProtocol: "hls",
+      TranscodingContainer: "ts",
+      DefaultAudioStreamIndex: 1,
       Name: i === 0 ? "主线路" : "线路" + (i + 1),
+      Size: 0,
+      Bitrate: 2000000,
+      RunTimeTicks: 54000000000,
+      MediaStreams: makeStreams(),
     };
   });
   return json({
     MediaSources: mediaSources,
-    PlaySessionId: "sess-" + m.id,
+    PlaySessionId: sessionId,
   });
 }
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const p = url.pathname;
+    // Emby 系客户端（如部分车机 App）所有请求带 /emby 前缀，统一剥掉
+    let p = url.pathname;
+    if (/^\/emby(\/|$)/i.test(p)) p = p.slice(5) || "/";
     try {
       const data = await loadData(ctx);
       const delta = await loadDelta(env);
@@ -419,6 +474,18 @@ export default {
       if (p === "/System/Info/Public" || p === "/System/Info")
         return json(systemInfo());
       if (p === "/System/Ping") return new Response("pong", { status: 200 });
+
+      // ===== 通用客户端兼容层（carTV 等 Emby/Jellyfin 双协议 App 需要的周边端点）=====
+      if (p === "/Branding/Configuration")
+        return json({ SplashscreenEnabled: false, CustomCss: "" });
+      if (p === "/System/Configuration") return json({});
+      if (/^\/Sessions\/Playing/.test(p)) return new Response(null, { status: 204 });
+      if (/^\/DisplayPreferences\//.test(p)) return json({});
+      if (/\/Items\/Latest$/.test(p)) return json([]);
+      if (/\/Items\/(Resume|ContinueWatching|NextUp)$/.test(p))
+        return json({ Items: [], TotalRecordCount: 0 });
+      if (/^\/Shows\/[^\/]+\/(Episodes|Seasons)/.test(p))
+        return json({ Items: [], TotalRecordCount: 0 });
 
       if (p === "/proxy") return proxyRoute(url);
 
@@ -444,8 +511,17 @@ export default {
       if (m) { const it = getById(m[1], data, delta); return json(it ? toDto(it) : {}); }
       m = p.match(/^\/Items\/([^\/]+)\/Images\/Primary/);
       if (m) return imagePrimary(data, delta, m[1], url.origin);
+      m = p.match(/^\/Items\/([^\/]+)\/(Similar|Intros)/);
+      if (m) return json({ Items: [], TotalRecordCount: 0 });
+      m = p.match(/^\/Items\/([^\/]+)\/Download/);
+      if (m) return streamProxy(data, delta, m[1], url);
       m = p.match(/^\/Items\/([^\/]+)\/PlaybackInfo/);
       if (m) return playbackInfo(data, delta, m[1], url.origin);
+      // AutoOpenLiveStream=true 时部分客户端会调 LiveStreams/Open 打开流
+      if (/^\/LiveStreams\/Open/i.test(p)) {
+        const lsId = url.searchParams.get("Id") || url.searchParams.get("MediaSourceId") || "";
+        return playbackInfo(data, delta, lsId.split("-")[0], url.origin);
+      }
       // 播放：途播会请求 /Videos/{id}/stream（或带 src 参数切换线路）
       m = p.match(/^\/Videos\/([^\/]+)(\/stream)?/);
       if (m) return streamProxy(data, delta, m[1], url);

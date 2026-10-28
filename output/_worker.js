@@ -1,7 +1,7 @@
 // 秦哥影视 · Jellyfin 兼容后端 (Cloudflare Pages Functions)
-// 部署在 qinjin.pages.dev
+// 部署在 production.kaka-m3u.pages.dev
 
-const DATA_ORIGIN = "https://qinjin.pages.dev";
+const DATA_ORIGIN = "https://production.kaka-m3u.pages.dev";
 const DATA_VERSION = "20260903c";
 // 数据源（cc0cd 苹果CMS）不提供真实时长字段，故不返回 RunTimeTicks，
 // 避免途播显示统一的虚假“1小时30分”。若日后采集到真实时长再补。
@@ -903,7 +903,7 @@ function extractVideoUrl(html, pageUrl) {
 }
 
 function extractBaseReferer(target) {
-  try { return new URL(target).origin + "/"; } catch (_) { return "https://qinjin.pages.dev/"; }
+  try { return new URL(target).origin + "/"; } catch (_) { return "https://production.kaka-m3u.pages.dev/"; }
 }
 
 async function proxyFetch(target, origin, request, depth = 0, refOverride = null) {
@@ -1043,7 +1043,7 @@ async function streamProxy(data, id, url, request, ctx) {
   // 把分片/嵌套播放列表改写为原始 CDN 绝对地址，交给途播客户端大陆网络直连各源站拉流
   // ——与“直播”同机制，规避 worker 海外出口带宽瓶颈，从而流畅播放。
   // 仅 EXT-X-KEY（解密密钥，体积小）仍走 worker /proxy 带 Referer 取回，保证解密成功。
-  // 效果：m3u8 经 qinjin.pages.dev（随代理可达），分片直连源站 CDN（DIRECT）→ 既快又稳。
+  // 效果：m3u8 经 production.kaka-m3u.pages.dev（随代理可达），分片直连源站 CDN（DIRECT）→ 既快又稳。
   const origin = url.origin;
   for (const i of order) {
     // resolvePlayUrl 解析直链/分享页；解析失败则退回原始地址
@@ -1057,11 +1057,15 @@ async function streamProxy(data, id, url, request, ctx) {
     if (text && text.includes("#EXTM3U")) {
       return m3u8Response(clientDirectM3u8(text, real, origin));
     }
-    // 兜底：302 给客户端直连尝试
-    return redirect302(real);
+    // ⚠️ 该线路 worker 取不到清单（死链/过期分享页）：
+    // 疑似国内 CDN（worker 海外出口被源站限、手机直连通常能放）→ 照旧 302；
+    // 否则继续试下一条线路，全失败才兜底 302。
+    // （2026-10-12 修：carTV 等通用客户端无换线能力，第一条线死 = 整片失败；
+    // 旧代码 failover 循环首轮即 return，后面的线路永远轮不到。）
+    if (looksDomesticCdn(real)) return redirect302(real);
   }
 
-  // 极少数源 worker 出口取不到清单 → 兜底 302 给客户端直连
+  // 所有线路 worker 出口都取不到清单 → 兜底 302 给客户端直连
   // （途播可能仍失败，但浏览器/Safari 能放）
   return redirect302(sources[tryIdx]);
 }
@@ -1167,9 +1171,24 @@ function shouldClientParse(url) {
 }
 
 function makeStreams() {
+  // 逐字段复刻真实 Jellyfin 响应：部分通用客户端（carTV 等）用严格模型解码，
+  // 缺字段 → 解码失败 → 点播放秒败且不发任何流请求（2026-10-12 四轮抓包结论）。
   return [
-    { Type: "Video", Codec: "h264", IsDefault: true, IsExternal: false, Index: 0, Level: 0 },
-    { Type: "Audio", Codec: "aac", IsDefault: true, IsExternal: false, Index: 1, Level: 0 },
+    {
+      Type: "Video", Codec: "h264", IsVideo: true, IsDefault: true, IsExternal: false,
+      Index: 0, Level: 40, BitRate: 2000000, BitDepth: 8, Width: 1920, Height: 1080,
+      AspectRatio: "16:9", IsInterlaced: false, IsAVC: true, IsForced: false,
+      IsHearingImpaired: false, IsTextSubtitleStream: false, SupportsExternalStream: false,
+      VideoRange: "SDR", VideoRangeType: "SDR",
+      Language: "und", DisplayTitle: "1080p H264", Title: "1080p H264",
+    },
+    {
+      Type: "Audio", Codec: "aac", IsAudio: true, IsDefault: true, IsExternal: false,
+      Index: 1, BitRate: 128000, Channels: 2, SampleRate: 44100, ChannelLayout: "stereo",
+      IsForced: false, IsHearingImpaired: false, IsTextSubtitleStream: false,
+      SupportsExternalStream: false, Language: "und",
+      DisplayTitle: "Chinese - AAC - Stereo", Title: "Chinese",
+    },
   ];
 }
 
@@ -1189,6 +1208,18 @@ function isTuboBlocked(url) {
     const host = new URL(url).hostname.toLowerCase();
     return TUBO_BLOCKED.some(b => host.includes(b));
   } catch (_) { return false; }
+}
+
+// 疑似国内 CDN：worker 海外出口常被这些源站限制（取清单失败），
+// 但客户端大陆网络直连通常能播 → stream 兜底 302 而不是跳线路。
+// 与 probeRoute 里的 domesticCdn 判据保持一致（2026-10-12）。
+function looksDomesticCdn(url) {
+  let host = "";
+  try { host = new URL(url).hostname.toLowerCase(); } catch (_) { return false; }
+  return host.includes("lzcdn") || host.includes("liangzi") || host.includes("uvjtih")
+    || host.includes("baofeng") || host.includes("fengbao") || host.includes("bfvvs")
+    || host.includes("maotai") || host.includes("mtzy") || host.includes("vodcnd")
+    || host.includes("wgslsw") || host.includes("qncdn") || host.includes("cdnd");
 }
 
 // 途播侧可见的源：过滤掉黑名单域名。过滤后为空则返回 []（途播显示无可用线路），
@@ -1212,7 +1243,8 @@ async function playbackInfo(data, id, origin) {
   // 直播：不过滤、不代理，直接给原始 m3u8 地址让客户端大陆网络直连
   if (cat === "live") {
     const mediaSources = sourcesRaw.map((u, i) => {
-      const container = detectContainer(u);
+      // ⚠️ 与非 live 分支同理：容器报 "mp4" 进通用客户端直连白名单（见下方注释）
+      const container = "mp4";
       return {
         Protocol: "Http",
         Id: m.id + "-" + i,
@@ -1223,7 +1255,10 @@ async function playbackInfo(data, id, origin) {
         IsRemote: true,
         SupportsDirectStream: true,
         SupportsDirectPlay: true,
-        SupportsTranscoding: false,
+        SupportsTranscoding: true,
+        TranscodingUrl: "/Videos/" + m.id + "/master.m3u8?MediaSourceId=" + m.id + "-" + i + "&VideoCodec=h264&AudioCodec=aac&TranscodingProtocol=hls&TranscodingContainer=ts&api_key=m3u-jellyfin-token",
+        TranscodingSubProtocol: "hls",
+        TranscodingContainer: "ts",
         Name: i === 0 ? "主线路" : "线路" + (i + 1),
         Size: 0,
         MediaStreams: makeStreams(),
@@ -1235,30 +1270,59 @@ async function playbackInfo(data, id, origin) {
   // 途播侧只暴露“途播可播”的源（过滤黑名单域名）；网页端走静态数据不受影响
   const sources = tuboSources(m);
   if (!sources.length) return { MediaSources: [] };
+  // ⚠️ PlaySessionId 必须是标准 UUID：部分客户端会严格解析，非 UUID 直接判死
+  const sessionId = crypto.randomUUID();
   const mediaSources = sources.map((u, i) => {
-    const container = detectContainer(u);
+    // ⚠️ Container 必须报 "mp4"：carTV 等通用客户端的 DeviceProfile 直连白名单
+    // 只有 mp4,m4v,mov（转码才认 HLS+ts）。报 "m3u8" 两个名单都不沾 → 客户端
+    // 能力匹配判死，点播放秒败且不发任何流请求（2026-10-12 抓包实锤）。
+    // 实际内容是 m3u8 也没关系：Darwin AVPlayer 按内容嗅探，不认容器声明。
+    const container = "mp4";
     // 所有线路统一走 worker 代理：worker 能解析的分享页返回真实 m3u8，
     // 解析失败再 302 让客户端大陆网络自行解析，体验最稳。
-    const path = origin + "/Videos/" + m.id + "/stream?src=" + i;
+    // ⚠️ 路径带 .mp4 后缀：部分客户端校验 URL 扩展名与 Container 一致，
+    // /Videos/{id}/* 全部落 streamProxy，后缀只是给客户端看的。
+    const path = origin + "/Videos/" + m.id + "/stream.mp4?src=" + i;
+    // ⚠️ DirectStreamUrl/TranscodingUrl 必须是相对路径（/Videos/...）：
+    // 真实 Jellyfin/Emby 就这么返回，客户端自己拼服务器地址；给绝对 URL
+    // 会被「base + path」拼接的客户端拼成垃圾 URL → 本地解析失败，
+    // 点播放秒败且零流请求（carTV 六轮排障实锤，2026-10-12）。
+    const relPath = "/Videos/" + m.id + "/stream.mp4?src=" + i;
     return {
       Protocol: "Http",
       Id: m.id + "-" + i,
       Path: path,
-      DirectStreamUrl: path,
+      DirectStreamUrl: relPath,
       Type: "Default",
       Container: container,
-      IsRemote: false,
+      // ⚠️ IsRemote 必须为 true：Path 是 http URL，标 false 会被通用客户端
+      // （carTV 等 Emby 系）当成「本地文件路径」→ 播放方式协商直接失败。
+      IsRemote: true,
       SupportsDirectStream: true,
       SupportsDirectPlay: true,
-      SupportsTranscoding: false,
+      SupportsProbing: false,
+      RequiresOpening: false,
+      RequiresClosing: false,
+      RequiresLooping: false,
+      IsInfiniteStream: false,
+      // ⚠️ 必须给转码回退位：通用客户端的 DeviceProfile 往往不含 m3u8 直连，
+      // 没有 TranscodingUrl 会判定「无可用播放方式」→ 点播放秒败且不发起流请求。
+      // master.m3u8 实际返回改写后的 HLS 清单，无需真转码。
+      SupportsTranscoding: true,
+      TranscodingUrl: "/Videos/" + m.id + "/master.m3u8?MediaSourceId=" + m.id + "-" + i + "&PlaySessionId=" + sessionId + "&VideoCodec=h264&AudioCodec=aac&TranscodingProtocol=hls&TranscodingContainer=ts&api_key=m3u-jellyfin-token",
+      TranscodingSubProtocol: "hls",
+      TranscodingContainer: "ts",
+      DefaultAudioStreamIndex: 1,
       Name: i === 0 ? "主线路" : "线路" + (i + 1),
       Size: 0,
+      Bitrate: 2000000,
+      RunTimeTicks: 54000000000,
       MediaStreams: makeStreams(),
     };
   });
   return {
     MediaSources: mediaSources,
-    PlaySessionId: "sess-" + m.id,
+    PlaySessionId: sessionId,
   };
 }
 
@@ -1268,6 +1332,11 @@ function isJellyfinPath(p) {
     p.startsWith("/System/") ||
     p.startsWith("/Users/") ||
     p.startsWith("/Items") ||      // /Items 列表 + /Items/{id} 详情/播放信息
+    p.startsWith("/Branding/") ||  // 通用客户端兼容层（carTV 等 Emby 系 App）
+    p.startsWith("/Sessions/") ||
+    p.startsWith("/DisplayPreferences/") ||
+    p.startsWith("/Shows/") ||
+    p.startsWith("/LiveStreams/") ||
     p.startsWith("/Videos/") ||
     p === "/proxy" ||
     p === "/probe" ||             // 线路预检：前端开播前并发探测，避免死链空等
@@ -1285,7 +1354,10 @@ export default {
   async fetch(request, env, ctx) {
     ENV = env;   // 捕获绑定（含 KV_DELTA）；无绑定时 deltaEnabled()=false，自动降级纯静态
     const url = new URL(request.url);
-    const p = url.pathname;
+    // Emby 系客户端（carTV 等车机 App）所有请求带 /emby 前缀，统一剥掉
+    // ⚠️ 与 jellyfin/src/worker.js 的兼容层保持同步，两处改动须一起提交
+    let p = url.pathname;
+    if (/^\/emby(\/|$)/i.test(p)) p = p.slice(5) || "/";
 
     // 网站搜索：同源路由，必须在 ASSETS 兜底之前处理
     if (p === "/site/search") {
@@ -1301,6 +1373,19 @@ export default {
       if (p === "/System/Info/Public" || p === "/System/Info")
         return cacheJson(request, systemInfo(), 200, DATA_VERSION + "_sys", 3600, 86400);
       if (p === "/System/Ping") return new Response("pong", { status: 200 });
+
+      // ===== 通用客户端兼容层（carTV 等 Emby/Jellyfin 双协议 App 需要的周边端点）=====
+      if (p === "/Branding/Configuration")
+        return json({ SplashscreenEnabled: false, CustomCss: "" });
+      if (p === "/System/Configuration") return json({});
+      if (/^\/Sessions\/Playing/.test(p)) return new Response(null, { status: 204 });
+      if (/^\/DisplayPreferences\//.test(p)) return json({});
+      if (/\/Items\/Latest$/.test(p)) return json([]);
+      if (/\/Items\/(Resume|ContinueWatching|NextUp)$/.test(p))
+        return json({ Items: [], TotalRecordCount: 0 });
+      if (/^\/Shows\/[^\/]+\/(Episodes|Seasons)/.test(p))
+        return json({ Items: [], TotalRecordCount: 0 });
+
       if (p === "/proxy") return proxyRoute(url, request);
       if (p === "/probe") return probeRoute(url);
 
@@ -1345,7 +1430,38 @@ export default {
       m = p.match(/^\/Items\/([^\/]+)\/PlaybackInfo/);
       if (m) {
         const data = makeData(ctx, url.origin);
-        return cacheJson(request, await playbackInfo(data, m[1], url.origin), 200, DATA_VERSION + "_play_" + m[1], 60, 300);
+        const info = await playbackInfo(data, m[1], url.origin);
+        // ⚠️ PlaybackInfo 严禁任何客户端缓存（含 stale-while-revalidate）：
+        // 响应含会话级 PlaySessionId，且 iOS NSURLCache 吃了旧响应后，
+        // 客户端点播放会直接用陈旧 MediaSources 本地判死、连请求都不发
+        // （carTV 秒败实锤：窗口期活跃浏览 11 分钟、点播放 0 次请求）。
+        return new Response(JSON.stringify(info), {
+          status: 200,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "access-control-allow-origin": "*",
+            "cache-control": "no-store, no-cache, must-revalidate",
+            "cdn-cache-control": "no-store",
+            "vary": "Accept-Encoding",
+          },
+        });
+      }
+      // AutoOpenLiveStream=true 时部分客户端会调 LiveStreams/Open 打开流
+      m = p.match(/^\/LiveStreams\/Open/i);
+      if (m) {
+        const data = makeData(ctx, url.origin);
+        const lsId = url.searchParams.get("Id") || url.searchParams.get("MediaSourceId") || "";
+        const itemId = lsId.split("-")[0];
+        const info = await playbackInfo(data, itemId, url.origin);
+        // 播放链路响应禁客户端缓存（同 PlaybackInfo，防陈旧 MediaSources 判死）
+        return json(info, 200, { "cache-control": "no-store, no-cache, must-revalidate", "cdn-cache-control": "no-store" });
+      }
+      m = p.match(/^\/Items\/([^\/]+)\/(Similar|Intros)/);
+      if (m) return json({ Items: [], TotalRecordCount: 0 });
+      m = p.match(/^\/Items\/([^\/]+)\/Download/);
+      if (m) {
+        const data = makeData(ctx, url.origin);
+        return streamProxy(data, m[1], url, request, ctx);
       }
       m = p.match(/^\/Videos\/([^\/]+)(\/stream)?/);
       if (m) {
