@@ -1,4 +1,4 @@
-// 秦哥影视 · Jellyfin 兼容后端 (Cloudflare Workers)
+// 卡卡影视 · Jellyfin 兼容后端 (Cloudflare Workers)
 // 让途播等 Jellyfin 客户端连上后显示海报墙 + 按地区分类 + 播放。
 // 数据来自主库 Pages 上预生成的 JSON（运行时 fetch + 边缘缓存，不依赖 D1/KV）。
 // 播放采用「服务端代取」模式：途播只跟本 Worker 通信，由 Cloudflare 边缘节点去拉
@@ -111,7 +111,7 @@ function json(obj, status = 200) {
 
 function systemInfo() {
   return {
-    ServerName: "秦哥影视",
+    ServerName: "卡卡影视",
     Version: "10.8.13",
     ProductName: "Jellyfin",
     ProductVersion: "10.8.13",

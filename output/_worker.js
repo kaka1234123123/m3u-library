@@ -1,4 +1,4 @@
-// 秦哥影视 · Jellyfin 兼容后端 (Cloudflare Pages Functions)
+// 卡卡影视 · Jellyfin 兼容后端 (Cloudflare Pages Functions)
 // 部署在 production.kaka-m3u.pages.dev
 
 const DATA_ORIGIN = "https://production.kaka-m3u.pages.dev";
@@ -409,7 +409,7 @@ function emptyList(request, etag = DATA_VERSION + "_empty") {
 
 function systemInfo() {
   return {
-    ServerName: "秦哥影视",
+    ServerName: "卡卡影视",
     Version: "10.8.13",
     ProductName: "Jellyfin",
     ProductVersion: "10.8.13",
